@@ -4,10 +4,10 @@ FROM pytorch/pytorch:2.5.1-cuda11.8-cudnn9-runtime
 
 WORKDIR /app
 
+# First copy all files to /app
+COPY . /app
+
 # Install pip dependencies
-
-COPY requirements.txt /app/requirements.txt
-
 RUN export TZ=Etc/UTC \
         && apt update --yes \
         && apt install g++ wget ffmpeg libsm6 libxext6 gimp libvulkan1 --yes \
@@ -20,8 +20,6 @@ RUN export TZ=Etc/UTC \
         && apt remove g++ wget --yes \
         && apt autoremove --yes \
         && rm -rf /var/cache/apt
-
-COPY . /app
 
 # Prepare models
 RUN python -u docker_prepare.py --continue-on-error
