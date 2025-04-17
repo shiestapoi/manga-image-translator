@@ -1,6 +1,6 @@
 {
   "name": "Manga Image Translator",
-  "dockerFile": ".devcontainer/Dockerfile",
+  "dockerFile": "Dockerfile",
   "appPort": [8000, 8080, 5003],
   "extensions": [
     "ms-python.python",
