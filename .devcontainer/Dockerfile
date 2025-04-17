@@ -1,10 +1,5 @@
 FROM pytorch/pytorch:2.5.1-cuda11.8-cudnn9-runtime
 
-# not apt update: most effective code in pytorch base image is in /opt/conda
-
-WORKDIR /app
-
-# First copy all files to /app
 COPY . /app
 
 # Install pip dependencies
