@@ -1,0 +1,22 @@
+{
+  "name": "Manga Image Translator",
+  "dockerFile": "Dockerfile",
+  "appPort": [8000, 8080, 5003],
+  "extensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter",
+    "GitHub.copilot",
+    "eamodio.gitlens",
+    "esbenp.prettier-vscode",
+    "oderwat.indent-rainbow",
+    "kisstkondoros.vscode-gutter-preview"
+  ],
+  "settings": {
+    "python.pythonPath": "/opt/conda/bin/python"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    }
+  }
+}

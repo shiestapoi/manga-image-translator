@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Translator - Manual Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        nav {
+            display: flex;
+            justify-content: center;
+            margin-top: 1rem;
+            margin-bottom: 20px;
+        }
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            margin: 0 0.5rem;
+            border-radius: 4px;
+        }
+        nav a:hover {
+            background-color: #34495e;
+        }
+        nav a.active {
+            background-color: #3498db;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        .hidden {
+            display: none;
+            visibility: hidden;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"] {
+            margin-bottom: 15px;
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        input[type="checkbox"] {
+            margin-right: 10px;
+        }
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            margin-bottom: 15px;
+            min-height: 150px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .status {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            border-left: 4px solid #3498db;
+        }
+        .result-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .file-input-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+        .file-input-container label {
+            background-color: #3498db;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-block;
+        }
+        .file-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #555;
+        }
+        .batch-container {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f0f8ff;
+            border-radius: 4px;
+            border-left: 4px solid #3498db;
+        }
+        .mode-selector {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .mode-selector button {
+            margin: 0 10px;
+            padding: 8px 15px;
+            background-color: #eee;
+            color: #333;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .mode-selector button.active {
+            background-color: #3498db;
+            color: white;
+        }
+        .connection-info {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f8ff;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Manga Translator - Manual Control</h1>
+        <nav>
+            <a href="/">Home</a>
+            <a href="/batch-ui">Batch Processing</a>
+            <a href="/history-ui">History</a>
+            <a href="/manual" class="active">Manual</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <div class="mode-selector">
+            <button id="single-mode-btn" class="active" onclick="switchMode('single')">Single Image</button>
+            <button id="batch-mode-btn" onclick="switchMode('batch')">Batch Processing</button>
+        </div>
+
+        <div id="single-mode">
+            <div class="file-input-container">
+                <label for="fileInput">Choose Image</label>
+                <input type="file" id="fileInput" accept="image/*">
+                <div class="file-info" id="fileInfo"></div>
+            </div>
+            
+            <div>
+                <input type="checkbox" id="generate-image" checked>
+                <label for="generate-image" style="display: inline;">Generate Image</label>
+            </div>
+            
+            <div>
+                <label for="config-json">Config JSON</label>
+                <textarea id="config-json" rows="10" cols="50" placeholder='{"translator": {"translator": "none"}}'></textarea>
+            </div>
+            
+            <div class="status" id="status"></div>
+            <div class="error" id="error"></div>
+            
+            <button id="submit-button" onclick="uploadAndTranslate()">Upload and Translate</button>
+            
+            <div class="result-container" id="result-container"></div>
+        </div>
+
+        <div id="batch-mode" class="hidden">
+            <div class="batch-container">
+                <h2>Batch Processing</h2>
+                
+                <div>
+                    <label for="batch-name">Batch Name</label>
+                    <input type="text" id="batch-name" style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                
+                <div>
+                    <label for="batch-files">Select Multiple Images</label>
+                    <input type="file" id="batch-files" multiple accept="image/*">
+                    <div class="file-info" id="batch-file-info"></div>
+                </div>
+                
+                <div>
+                    <label for="batch-config">Config JSON</label>
+                    <textarea id="batch-config" rows="10" cols="50" placeholder='{"translator": {"translator": "none"}}'></textarea>
+                </div>
+                
+                <div class="status" id="batch-status"></div>
+                <div class="error" id="batch-error"></div>
+                
+                <button id="batch-submit-button" onclick="uploadBatch()">Process Batch</button>
+                
+                <div class="result-container" id="batch-result-container"></div>
+            </div>
+        </div>
+
+        <div class="connection-info">
+            <p>If you're having connection issues, try connecting via SSH: <code>ssh -p 2222 username@hostname</code></p>
+            <p>Set a password with: <code>passwd</code> (first time only)</p>
+        </div>
+    </div>
+
+    <script>
+        var gdata = null;
+        var currentMode = 'single';
+
+        function switchMode(mode) {
+            currentMode = mode;
+            if (mode === 'single') {
+                document.getElementById('single-mode').classList.remove('hidden');
+                document.getElementById('batch-mode').classList.add('hidden');
+                document.getElementById('single-mode-btn').classList.add('active');
+                document.getElementById('batch-mode-btn').classList.remove('active');
+            } else {
+                document.getElementById('single-mode').classList.add('hidden');
+                document.getElementById('batch-mode').classList.remove('hidden');
+                document.getElementById('single-mode-btn').classList.remove('active');
+                document.getElementById('batch-mode-btn').classList.add('active');
+            }
+        }
+
+        function downloadFile() {
+            download("text.json", gdata)
+        }
+
+        function download(filename, text) {
+            let element = document.createElement('a');
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+
+            element.style.display = 'none';
+            document.body.appendChild(element);
+
+            element.click();
+
+            document.body.removeChild(element);
+        }
+
+        function download_bytes() {
+            const url = URL.createObjectURL(gdata);
+            const element = document.createElement('a');
+            element.setAttribute('href', url);
+            element.setAttribute('download', "image.png");
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+            URL.revokeObjectURL(url);
+        }
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('fileInfo').textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
+            } else {
+                document.getElementById('fileInfo').textContent = '';
+            }
+        });
+
+        document.getElementById('batch-files').addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                document.getElementById('batch-file-info').textContent = `Selected ${files.length} files`;
+            } else {
+                document.getElementById('batch-file-info').textContent = '';
+            }
+        });
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        async function uploadAndTranslate() {
+            const errorField = document.getElementById('error');
+            const statusField = document.getElementById('status');
+            const resultContainer = document.getElementById('result-container');
+            let submitButton = document.getElementById("submit-button")
+            const fileInput = document.getElementById('fileInput');
+            const generateImage = document.getElementById('generate-image');
+            const configField = document.getElementById('config-json');
+
+            submitButton.disabled = true;
+            statusField.innerHTML = 'Uploading...';
+            errorField.innerHTML = '';
+            resultContainer.innerHTML = '';
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                errorField.innerHTML = 'Please select an image file.';
+                submitButton.disabled = false;
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('image', file);
+            const text = configField.value;
+            if (text.length > 2) {
+                formData.append('config', text)
+            }
+
+            try {
+                const response = await fetch(generateImage.checked ? '/translate/with-form/image/stream' : '/translate/with-form/json/stream', {
+                    method: 'POST',
+                    body: formData
+                });
+                await process(response, statusField, errorField, resultContainer, generateImage.checked)
+            } catch (error) {
+                errorField.innerHTML = error.message || 'An error occurred during upload';
+                console.error(error);
+            } finally {
+                submitButton.disabled = false;
+            }
+        }
+
+        async function uploadBatch() {
+            const errorField = document.getElementById('batch-error');
+            const statusField = document.getElementById('batch-status');
+            const resultContainer = document.getElementById('batch-result-container');
+            let submitButton = document.getElementById("batch-submit-button")
+            const batchName = document.getElementById('batch-name');
+            const fileInput = document.getElementById('batch-files');
+            const configField = document.getElementById('batch-config');
+
+            submitButton.disabled = true;
+            statusField.innerHTML = 'Creating batch...';
+            errorField.innerHTML = '';
+            resultContainer.innerHTML = '';
+            
+            if (!batchName.value) {
+                errorField.innerHTML = 'Please enter a batch name.';
+                submitButton.disabled = false;
+                return;
+            }
+            
+            const files = fileInput.files;
+            if (files.length === 0) {
+                errorField.innerHTML = 'Please select at least one image file.';
+                submitButton.disabled = false;
+                return;
+            }
+
+            try {
+                // Step 1: Create a new batch
+                const batchResponse = await fetch('/batch/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        name: batchName.value,
+                        description: 'Created from manual interface'
+                    })
+                });
+                
+                if (!batchResponse.ok) {
+                    throw new Error('Failed to create batch');
+                }
+                
+                const batchData = await batchResponse.json();
+                const batchId = batchData.batch_id;
+                
+                statusField.innerHTML = `Batch "${batchName.value}" created (ID: ${batchId}). Uploading ${files.length} files...`;
+                
+                // Step 2: Add files to the batch
+                const formData = new FormData();
+                for (let i = 0; i < files.length; i++) {
+                    formData.append('images', files[i]);
+                }
+                
+                const configText = configField.value;
+                formData.append('config', configText.length > 2 ? configText : '{}');
+                
+                const uploadResponse = await fetch(`/batch/${batchId}/add-multiple`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!uploadResponse.ok) {
+                    throw new Error('Failed to add images to batch');
+                }
+                
+                const uploadData = await uploadResponse.json();
+                
+                statusField.innerHTML = `Successfully added ${uploadData.length} images to batch "${batchName.value}".`;
+                
+                resultContainer.innerHTML = `
+                    <div style="margin-top: 20px; text-align: left; padding: 15px; background-color: #e8f4fc; border-radius: 4px;">
+                        <h3>Batch Processing Started</h3>
+                        <p><strong>Batch Name:</strong> ${batchName.value}</p>
+                        <p><strong>Batch ID:</strong> ${batchId}</p>
+                        <p><strong>Images:</strong> ${uploadData.length}</p>
+                        <p>You can track the progress in the <a href="/batch-ui" style="color: #3498db;">Batch Processing</a> or <a href="/history-ui?batch=${batchId}" style="color: #3498db;">History</a> pages.</p>
+                        <button onclick="window.location.href='/history-ui?batch=${batchId}'" style="margin-top: 10px; background-color: #2ecc71;">View Progress</button>
+                    </div>
+                `;
+                
+            } catch (error) {
+                errorField.innerHTML = error.message || 'An error occurred during batch processing';
+                console.error(error);
+            } finally {
+                submitButton.disabled = false;
+            }
+        }
+
+        async function process(response, statusField, errorField, resultContainer, image) {
+            if (response.ok) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = new Uint8Array();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const newBuffer = new Uint8Array(buffer.length + value.length);
+                    newBuffer.set(buffer);
+                    newBuffer.set(value, buffer.length);
+                    buffer = newBuffer;
+                    
+                    while (buffer.length >= 5) {
+                        const dataSize = new DataView(buffer.buffer).getUint32(1, false);
+                        const totalSize = 5 + dataSize;
+                        
+                        if (buffer.length < totalSize) {
+                            break;
+                        }
+
+                        const statusCode = buffer[0];
+                        const data = buffer.slice(5, totalSize);
+
+                        if (statusCode === 0) {
+                            if (image) {
+                                gdata = new Blob([data], { type: 'application/octet-stream' });
+                                resultContainer.innerHTML = `
+                                    <img src="${URL.createObjectURL(gdata)}" style="max-width: 100%; max-height: 400px; margin-bottom: 10px;">
+                                    <br>
+                                    <button onclick="download_bytes()">Download Image</button>
+                                `;
+                                statusField.innerHTML = 'Translation completed successfully!';
+                            } else {
+                                gdata = decoder.decode(data);
+                                resultContainer.innerHTML = `
+                                    <div style="text-align: left; max-height: 400px; overflow-y: auto; padding: 10px; background-color: #f8f9fa; border-radius: 4px; font-family: monospace; margin-bottom: 10px;">
+                                        <pre>${gdata}</pre>
+                                    </div>
+                                    <button onclick="downloadFile()">Download JSON</button>
+                                `;
+                                statusField.innerHTML = 'Translation completed successfully!';
+                            }
+                        } else if (statusCode === 1) {
+                            const parsed_data = decoder.decode(data);
+                            statusField.innerHTML = `Translation step: ${parsed_data}`;
+                        } else if (statusCode === 2) {
+                            const errorMsg = decoder.decode(data);
+                            statusField.innerHTML = 'Error occurred during processing';
+                            errorField.innerHTML = errorMsg;
+                            console.error('Translation error:', errorMsg);
+                        } else if (statusCode === 3) {
+                            const parsed_data = decoder.decode(data);
+                            statusField.innerHTML = `In queue: position ${parsed_data}`;
+                        } else if (statusCode === 4) {
+                            statusField.innerHTML = `Started translation process...`;
+                        }
+                        
+                        buffer = buffer.slice(totalSize);
+                    }
+                }
+            } else {
+                errorField.innerHTML = `Server error: ${response.status} ${response.statusText}`;
+                console.error('Server error:', response.status, response.statusText);
+            }
+        }
+
+        // Initialize the interface
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('config-json').value = JSON.stringify({
+                "detector": {
+                    "detector": "default",
+                    "detection_size": 1536,
+                    "box_threshold": 0.7,
+                    "unclip_ratio": 2.3
+                },
+                "translator": {
+                    "translator": "youdao",
+                    "target_lang": "ENG"
+                },
+                "inpainter": {
+                    "inpainter": "default",
+                    "inpainting_size": 2048
+                },
+                "mask_dilation_offset": 30
+            }, null, 2);
+            
+            document.getElementById('batch-config').value = JSON.stringify({
+                "detector": {
+                    "detector": "default",
+                    "detection_size": 1536
+                },
+                "translator": {
+                    "translator": "youdao",
+                    "target_lang": "ENG"
+                },
+                "inpainter": {
+                    "inpainter": "default"
+                }
+            }, null, 2);
+        });
+    </script>
+</body>
+</html>
