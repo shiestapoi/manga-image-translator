@@ -6,9 +6,13 @@ import signal
 import subprocess
 import sys
 import logging
+import uuid
 from argparse import Namespace
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+import datetime
+import asyncio
+import pickle
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -21,10 +25,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from manga_translator import Config
 from server.instance import ExecutorInstance, executor_instances
 from server.myqueue import task_queue, QueueElement, BatchJob
-from server.request_extraction import get_ctx, while_streaming, TranslateRequest, to_pil_image
+from server.request_extraction import get_ctx, while_streaming, TranslateRequest, to_pil_image, wait_in_queue
 from server.to_json import to_translation, TranslationResponse
 from pydantic import BaseModel
 from server.storage import save_result_image
+from server.streaming import notify, stream
+# Import database functions
+from server.database import save_task, update_task, get_task, get_recent_tasks
+from server.database import create_batch as db_create_batch
+from server.database import get_batch as db_get_batch
+from server.database import get_batch_tasks as db_get_batch_tasks
+from server.database import list_batches as db_list_batches
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -64,6 +75,13 @@ async def startup_event():
     await task_queue.start_background_tasks()
     await executor_instances.start_background_tasks()
     logger.info("Background tasks started.")
+    
+    # Initialize database tables if needed
+    from server.database import init_database
+    if init_database():
+        logger.info("Database tables initialized successfully")
+    else:
+        logger.warning("Failed to initialize database tables")
 
 # New models for batch processing
 class BatchRequest(BaseModel):
@@ -187,14 +205,31 @@ async def bytes_form(req: Request, image: UploadFile = File(...), config: str = 
     return StreamingResponse(content=to_translation(ctx).to_bytes())
 
 @app.post("/translate/with-form/image", response_description="the result image", tags=["api", "form"],response_class=StreamingResponse)
-async def image_form(req: Request, image: UploadFile = File(...), config: str = Form("{}")) -> StreamingResponse:
-    img = await image.read()
-    ctx = await get_ctx(req, Config.parse_raw(config), img)
-    img_byte_arr = io.BytesIO()
-    ctx.result.save(img_byte_arr, format="PNG")
-    img_byte_arr.seek(0)
+async def image_form(
+    req: Request,
+    image: UploadFile = File(...),
+    config: str = Form("{}")
+) -> StreamingResponse:
+    # generate and record task
+    task_id = uuid.uuid4().hex
+    cfg = Config.parse_raw(config)
+    save_task(task_id, None, "processing", cfg.dict())
 
-    return StreamingResponse(img_byte_arr, media_type="image/png")
+    # perform translation
+    img_bytes = await image.read()
+    ctx = await get_ctx(req, cfg, img_bytes)
+
+    # persist result to R2 and update DB
+    result_path = save_result_image(ctx.result, task_id)
+    update_task(task_id, "completed", result_path=result_path)
+
+    # return PNG stream with task id
+    buf = io.BytesIO()
+    ctx.result.save(buf, format="PNG")
+    buf.seek(0)
+    resp = StreamingResponse(buf, media_type="image/png")
+    resp.headers["X-Task-ID"] = task_id
+    return resp
 
 @app.post("/translate/with-form/json/stream", response_class=StreamingResponse, tags=["api", "form"],response_description="A stream over elements with strucure(1byte status, 4 byte size, n byte data) status code are 0,1,2,3,4 0 is result data, 1 is progress report, 2 is error, 3 is waiting queue position, 4 is waiting for translator instance")
 async def stream_json_form(req: Request, image: UploadFile = File(...), config: str = Form("{}")) -> StreamingResponse:
@@ -206,14 +241,44 @@ async def stream_bytes_form(req: Request, image: UploadFile = File(...), config:
     img = await image.read()
     return await while_streaming(req, transform_to_bytes, Config.parse_raw(config), img)
 
-@app.post("/translate/with-form/image/stream", response_class=StreamingResponse, tags=["api", "form"], response_description="A stream over elements with strucure(1byte status, 4 byte size, n byte data) status code are 0,1,2,3,4 0 is result data, 1 is progress report, 2 is error, 3 is waiting queue position, 4 is waiting for translator instance")
-async def stream_image_form(req: Request, image: UploadFile = File(...), config: str = Form("{}")) -> StreamingResponse:
-    img = await image.read()
-    return await while_streaming(req, transform_to_image, Config.parse_raw(config), img)
+@app.post("/translate/with-form/image/stream", response_class=StreamingResponse, tags=["api","form"],response_description="streaming PNG plus task persistence")
+async def stream_image_form(
+    req: Request,
+    image: UploadFile = File(...),
+    config: str = Form("{}")
+) -> StreamingResponse:
+    # generate and record task
+    task_id = uuid.uuid4().hex
+    cfg = Config.parse_raw(config)
+    save_task(task_id, None, "processing", cfg.dict())
+
+    # prepare image and queue element
+    img_bytes = await image.read()
+    pil_img = await to_pil_image(img_bytes)
+    task = QueueElement(req, pil_img, cfg, 0)
+    task_queue.add_task(task)
+
+    # set up streaming queue
+    messages = asyncio.Queue()
+
+    def notify_internal(code: int, data: bytes) -> None:
+        if code == 0:
+            # final result: persist to R2 and DB
+            ctx = pickle.loads(data)
+            asyncio.create_task(save_result_image(ctx.result, task_id)).add_done_callback(
+                lambda fut: update_task(task_id, "completed", result_path=fut.result())
+            )
+        # forward chunk to client
+        notify(code, data, transform_to_image, messages)
+
+    # stream out 
+    streaming_response = StreamingResponse(stream(messages), media_type="application/octet-stream")
+    asyncio.create_task(wait_in_queue(task, notify_internal))
+    return streaming_response
 
 # Enhanced queue processing for single images
 async def process_single_image_task(task: QueueElement):
-    """Process a single image task with storage capability."""
+    """Process a single image task with database storage."""
     from server.instance import executor_instances
     try:
         instance = await executor_instances.find_executor()
@@ -221,17 +286,67 @@ async def process_single_image_task(task: QueueElement):
             raise RuntimeError("No available translator instances.")
         
         task.status = "processing"
+        # Update database status
+        update_task(task.task_id, "processing")
+        
         result = await instance.sent(task.get_image(), task.config)
-        # Save result to storage
-        task.result_path = save_result_image(result.result, task.task_id)
+        # Save result to R2 storage
+        result_path = save_result_image(result.result, task.task_id)
+        task.result_path = result_path
         task.status = "completed"
+        
+        # Update database with completed status and result path
+        update_task(task.task_id, "completed", result_path=result_path)
+        
+        # Clean up cache files
+        task.cleanup_files()
     except Exception as e:
+        error_message = f"Error processing task {task.task_id}: {str(e)}"
         task.status = "failed"
-        task.error_message = f"Error processing task {task.task_id}: {str(e)}"
-        logger.error(task.error_message)
+        task.error_message = error_message
+        logger.error(error_message)
+        
+        # Update database with error message
+        update_task(task.task_id, "failed", error_message=error_message)
+        
+        # Clean up cache files even on error
+        task.cleanup_files()
     finally:
         if instance:
             await executor_instances.free_executor(instance)
+
+# Batch processing with database storage
+async def process_batch_task(task: QueueElement):
+    from server.instance import executor_instances
+    try:
+        instance = await executor_instances.find_executor()
+        task.status = "processing"
+        # Update database status
+        update_task(task.task_id, "processing")
+        
+        result = await instance.sent(task.get_image(), task.config)
+        # Save result to R2 storage
+        result_path = save_result_image(result.result, task.task_id)
+        task.result_path = result_path
+        task.status = "completed"
+        
+        # Update database with completed status and result path
+        update_task(task.task_id, "completed", result_path=result_path)
+        
+        # Clean up cache files after successful processing
+        task.cleanup_files()
+    except Exception as e:
+        error_message = str(e)
+        task.status = "failed"
+        task.error_message = error_message
+        
+        # Update database with error message
+        update_task(task.task_id, "failed", error_message=error_message)
+        
+        # Clean up cache files even on error
+        task.cleanup_files()
+    finally:
+        await executor_instances.free_executor(instance)
 
 @app.post("/queue/single", response_model=TaskStatus, tags=["queue"])
 async def queue_single_image(
@@ -243,7 +358,12 @@ async def queue_single_image(
     """Queue a single image for processing."""
     img_data = await image.read()
     img = await to_pil_image(img_data)
-    task = QueueElement(req, img, Config.parse_raw(config), priority=2)
+    config_obj = Config.parse_raw(config)
+    task = QueueElement(req, img, config_obj, priority=2)
+    
+    # Save task to database
+    save_task(task.task_id, None, "queued", config_obj.dict())
+    
     task_queue.add_task(task)
     background_tasks.add_task(process_single_image_task, task)
     return TaskStatus(
@@ -275,30 +395,14 @@ async def get_single_task_status(task_id: str):
     
     return response
 
-# New batch processing endpoints
-async def process_batch_task(task: QueueElement):
-    from server.instance import executor_instances
-    try:
-        instance = await executor_instances.find_executor()
-        task.status = "processing"
-        result = await instance.sent(task.get_image(), task.config)
-        # Simpan hasil ke local atau R2
-        task.result_path = save_result_image(result.result, task.task_id)
-        task.status = "completed"
-        if task.batch_id:
-            task_queue.task_history.update_batch(task.batch_id, task.task_id, "completed")
-    except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        if task.batch_id:
-            task_queue.task_history.update_batch(task.batch_id, task.task_id, "failed")
-    finally:
-        await executor_instances.free_executor(instance)
-
 @app.post("/batch/create", response_model=BatchStatus, tags=["batch"])
 async def create_batch(batch_request: BatchRequest):
     """Create a new batch job for processing multiple images"""
     batch = task_queue.create_batch(batch_request.name, batch_request.description)
+    
+    # Save to database
+    db_create_batch(batch.batch_id, batch_request.name, batch_request.description)
+    
     return BatchStatus(**batch.to_dict())
 
 @app.post("/batch/{batch_id}/add", response_model=TaskStatus, tags=["batch"])
@@ -313,9 +417,15 @@ async def add_to_batch(
     batch = task_queue.get_batch(batch_id)
     if not batch:
         raise HTTPException(404, detail=f"Batch {batch_id} not found")
+    
     img_data = await image.read()
     img = await to_pil_image(img_data)
-    task = QueueElement(req, img, Config.parse_raw(config), priority=1, batch_id=batch_id)
+    config_obj = Config.parse_raw(config)
+    task = QueueElement(req, img, config_obj, priority=1, batch_id=batch_id)
+    
+    # Save to database
+    save_task(task.task_id, batch_id, "queued", config_obj.dict())
+    
     task_queue.add_task(task)
     background_tasks.add_task(process_batch_task, task)
     return TaskStatus(
@@ -336,11 +446,18 @@ async def add_multiple_to_batch(
     batch = task_queue.get_batch(batch_id)
     if not batch:
         raise HTTPException(404, detail=f"Batch {batch_id} not found")
+    
     statuses = []
+    config_obj = Config.parse_raw(config)
+    
     for image in images:
         img_data = await image.read()
         img = await to_pil_image(img_data)
-        task = QueueElement(req, img, Config.parse_raw(config), priority=1, batch_id=batch_id)
+        task = QueueElement(req, img, config_obj, priority=1, batch_id=batch_id)
+        
+        # Save to database
+        save_task(task.task_id, batch_id, "queued", config_obj.dict())
+        
         task_queue.add_task(task)
         background_tasks.add_task(process_batch_task, task)
         statuses.append(TaskStatus(
@@ -348,36 +465,57 @@ async def add_multiple_to_batch(
             status=task.status,
             queue_position=task_queue.get_pos(task)
         ))
+    
     return statuses
 
 @app.get("/batch/{batch_id}", response_model=BatchStatus, tags=["batch"])
 async def get_batch_status(batch_id: str):
     """Get the status of a batch job"""
-    batch = task_queue.get_batch(batch_id)
+    # Try database first
+    batch = db_get_batch(batch_id)
     if not batch:
-        raise HTTPException(404, detail=f"Batch {batch_id} not found")
+        # Fall back to in-memory if database fails
+        batch = task_queue.get_batch(batch_id)
+        if not batch:
+            raise HTTPException(404, detail=f"Batch {batch_id} not found")
+        batch = batch.to_dict()
     
-    return BatchStatus(**batch.to_dict())
+    return BatchStatus(**batch)
 
 @app.get("/batch/{batch_id}/tasks", response_model=List[Dict[str, Any]], tags=["batch"])
 async def get_batch_tasks(batch_id: str):
     """Get all tasks in a batch job"""
-    tasks = task_queue.get_batch_tasks(batch_id)
+    # Try database first
+    tasks = db_get_batch_tasks(batch_id)
     if not tasks:
-        raise HTTPException(404, detail=f"Batch {batch_id} not found or has no tasks")
+        # Fall back to in-memory if database fails
+        tasks = task_queue.get_batch_tasks(batch_id)
+        if not tasks:
+            raise HTTPException(404, detail=f"Batch {batch_id} not found or has no tasks")
     
     return tasks
 
 @app.get("/batch", response_model=List[BatchStatus], tags=["batch"])
 async def list_batches(limit: int = 50):
     """List all batch jobs"""
-    batches = task_queue.list_batches(limit)
+    # Try database first
+    batches = db_list_batches(limit)
+    if not batches:
+        # Fall back to in-memory if database fails
+        batches = task_queue.list_batches(limit)
+    
     return [BatchStatus(**batch) for batch in batches]
 
 @app.get("/history", response_model=List[Dict[str, Any]], tags=["history"])
 async def get_history(limit: int = 50):
     """Get recent translation history"""
-    return task_queue.get_recent_tasks(limit)
+    # Try database first
+    tasks = get_recent_tasks(limit)
+    if not tasks:
+        # Fall back to in-memory if database fails
+        tasks = task_queue.get_recent_tasks(limit)
+    
+    return tasks
 
 @app.post("/queue-size", response_model=int, tags=["api", "json"])
 async def queue_size() -> int:
@@ -484,6 +622,21 @@ def prepare(args):
         nonce = os.getenv('MT_WEB_NONCE', generate_nonce())
     else:
         nonce = args.nonce
+    
+    # Set up CPU core utilization
+    import multiprocessing
+    import torch
+    num_cores = multiprocessing.cpu_count()
+    logger.info(f"Detected {num_cores} CPU cores")
+    
+    # Configure PyTorch to use all available cores
+    torch.set_num_threads(num_cores)
+    
+    # Configure multiprocessing for other operations
+    os.environ["OMP_NUM_THREADS"] = str(num_cores)
+    os.environ["MKL_NUM_THREADS"] = str(num_cores)
+    
+    logger.info(f"Application configured to use {num_cores} CPU cores")
         
     # Create required directories with absolute paths
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # /app

@@ -58,13 +58,18 @@ class QueueElement:
 
     def __del__(self):
         try:
+            self.cleanup_files()
+        except Exception as e:
+            print(f"Error cleaning up task {self.task_id} during deletion: {str(e)}")
+
+    def cleanup_files(self):
+        """Explicitly clean up any temporary files associated with this task"""
+        try:
             if hasattr(self, 'image_path') and os.path.exists(self.image_path):
                 os.remove(self.image_path)
-            if self.result_path and os.path.exists(self.result_path):
-                # Don't delete results, they're in history
-                pass
+                print(f"Cleaned up task {self.task_id} cache file: {self.image_path}")
         except Exception as e:
-            print(f"Error cleaning up task {self.task_id}: {str(e)}")
+            print(f"Error cleaning up task {self.task_id} files: {str(e)}")
 
     async def is_client_disconnected(self) -> bool:
         try:
@@ -433,6 +438,8 @@ async def wait_in_queue(task: QueueElement, notify: NotifyType):
                 else:
                     task.status = "error"
                     task.error_message = "Task no longer in queue"
+                    # Clean up cache files
+                    task.cleanup_files()
                     raise HTTPException(500, detail="Task was removed from queue")
             
             # Update client on queue position if streaming
@@ -444,6 +451,8 @@ async def wait_in_queue(task: QueueElement, notify: NotifyType):
                 # Check if client is still connected
                 if await task.is_client_disconnected():
                     await task_queue.update_event()
+                    # Clean up cache files for disconnected clients
+                    task.cleanup_files()
                     if notify:
                         return
                     else:
@@ -473,6 +482,9 @@ async def wait_in_queue(task: QueueElement, notify: NotifyType):
                         # Update batch if needed
                         if task.batch_id:
                             task_queue.task_history.update_batch(task.batch_id, task.task_id, "completed")
+                        
+                        # Clean up upload-cache file after successful processing
+                        task.cleanup_files()
                     else:
                         # Normal response
                         result = await instance.sent(task.get_image(), task.config)
@@ -490,6 +502,9 @@ async def wait_in_queue(task: QueueElement, notify: NotifyType):
                         if task.batch_id:
                             task_queue.task_history.update_batch(task.batch_id, task.task_id, "completed")
                         
+                        # Clean up upload-cache file after successful processing
+                        task.cleanup_files()
+                        
                         return result
                 
                 except Exception as e:
@@ -501,6 +516,9 @@ async def wait_in_queue(task: QueueElement, notify: NotifyType):
                         task.status = "failed"
                         if task.batch_id:
                             task_queue.task_history.update_batch(task.batch_id, task.task_id, "failed")
+                        
+                        # Clean up upload-cache file after final failure
+                        task.cleanup_files()
                         
                         if notify:
                             notify(2, f"Failed to process task after {task.retries} attempts: {str(e)}".encode('utf-8'))
@@ -535,6 +553,9 @@ async def wait_in_queue(task: QueueElement, notify: NotifyType):
                 
                 if task.batch_id:
                     task_queue.task_history.update_batch(task.batch_id, task.task_id, "error")
+                
+                # Clean up upload-cache file after critical error
+                task.cleanup_files()
                 
                 if notify:
                     notify(2, f"Critical error: {str(e)}".encode('utf-8'))

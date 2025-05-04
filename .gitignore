@@ -4,6 +4,8 @@ result
 .vscode
 *.onnx
 __pycache__
+.venv/
+upload-cache/
 ocrs
 Manga
 Manga-translated
