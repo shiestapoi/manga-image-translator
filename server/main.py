@@ -28,7 +28,7 @@ from server.myqueue import task_queue, QueueElement, BatchJob
 from server.request_extraction import get_ctx, while_streaming, TranslateRequest, to_pil_image, wait_in_queue
 from server.to_json import to_translation, TranslationResponse
 from pydantic import BaseModel
-from server.storage import save_result_image
+from server.storage import save_result_image, save_result_image_sync, get_result_path
 from server.streaming import notify, stream
 # Import database functions
 from server.database import save_task, update_task, get_task, get_recent_tasks
@@ -36,6 +36,8 @@ from server.database import create_batch as db_create_batch
 from server.database import get_batch as db_get_batch
 from server.database import get_batch_tasks as db_get_batch_tasks
 from server.database import list_batches as db_list_batches
+
+import httpx
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -76,6 +78,25 @@ async def startup_event():
     await executor_instances.start_background_tasks()
     logger.info("Background tasks started.")
     
+    # Aggressive cleanup of the upload-cache directory on startup
+    try:
+        upload_cache_dir = "upload-cache"
+        if os.path.exists(upload_cache_dir):
+            deleted_files = 0
+            for item in os.listdir(upload_cache_dir):
+                item_path = os.path.join(upload_cache_dir, item)
+                # Keep directories as they might be in use (like mangadex-*)
+                if os.path.isfile(item_path):
+                    try:
+                        os.remove(item_path)
+                        deleted_files += 1
+                    except Exception as e:
+                        logger.error(f"Error removing file {item_path}: {str(e)}")
+                
+            logger.info(f"Startup cleanup: removed {deleted_files} files from upload-cache")
+    except Exception as e:
+        logger.error(f"Error cleaning up upload cache on startup: {str(e)}")
+    
     # Initialize database tables if needed
     from server.database import init_database
     if init_database():
@@ -103,6 +124,9 @@ class BatchStatus(BaseModel):
     total_tasks: int
     completed_tasks: int
     failed_tasks: int
+
+    # Serve static files
+    app.mount("/static", StaticFiles(directory="server/static"), name="static")
 
 @app.post("/register", response_description="no response", tags=["internal-api"])
 async def register_instance(instance: ExecutorInstance, req: Request, req_nonce: str = Header(alias="X-Nonce")):
@@ -133,33 +157,6 @@ def transform_to_json(ctx):
 
 def transform_to_bytes(ctx):
     return to_translation(ctx).to_bytes()
-
-# Pastikan folder static ada sebelum mount
-# Ensure the static directory exists
-static_dir = Path(__file__).parent / "static"
-os.makedirs(static_dir, exist_ok=True)
-
-# Log the static directory path for debugging
-logger.info(f"Static directory path: {static_dir.resolve()}")
-
-# Serve static files for UI using @app.get
-@app.get("/static/{file_path:path}", tags=["static"])
-async def serve_static(file_path: str):
-    file_location = static_dir / file_path
-    if not file_location.exists() or not file_location.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    # Determine the correct media type based on the file extension
-    if file_location.suffix in [".png", ".jpg", ".jpeg", ".gif"]:
-        media_type = f"image/{file_location.suffix.lstrip('.')}"
-    elif file_location.suffix == ".css":
-        media_type = "text/css"
-    elif file_location.suffix == ".js":
-        media_type = "application/javascript"
-    else:
-        media_type = "application/octet-stream"
-    
-    return StreamingResponse(file_location.open("rb"), media_type=media_type)
 
 @app.post("/translate/json", response_model=TranslationResponse, tags=["api", "json"], response_description="json structure inspired by the ichigo translator extension")
 async def json(req: Request, data: TranslateRequest):
@@ -290,16 +287,16 @@ async def process_single_image_task(task: QueueElement):
         update_task(task.task_id, "processing")
         
         result = await instance.sent(task.get_image(), task.config)
-        # Save result to R2 storage
-        result_path = save_result_image(result.result, task.task_id)
-        task.result_path = result_path
+        # Save result to R2 storage asynchronously
+        asyncio.create_task(save_result_image(result.result, task.task_id)).add_done_callback(
+            lambda fut: update_task(task.task_id, "completed", result_path=fut.result())
+        )
         task.status = "completed"
-        
-        # Update database with completed status and result path
-        update_task(task.task_id, "completed", result_path=result_path)
         
         # Clean up cache files
         task.cleanup_files()
+        # Also clean up any potential leftover files in upload-cache
+        cleanup_task_files(task.task_id)
     except Exception as e:
         error_message = f"Error processing task {task.task_id}: {str(e)}"
         task.status = "failed"
@@ -311,6 +308,7 @@ async def process_single_image_task(task: QueueElement):
         
         # Clean up cache files even on error
         task.cleanup_files()
+        cleanup_task_files(task.task_id)
     finally:
         if instance:
             await executor_instances.free_executor(instance)
@@ -318,6 +316,7 @@ async def process_single_image_task(task: QueueElement):
 # Batch processing with database storage
 async def process_batch_task(task: QueueElement):
     from server.instance import executor_instances
+    instance = None  # Initialize instance as None to prevent UnboundLocalError
     try:
         instance = await executor_instances.find_executor()
         task.status = "processing"
@@ -326,15 +325,14 @@ async def process_batch_task(task: QueueElement):
         
         result = await instance.sent(task.get_image(), task.config)
         # Save result to R2 storage
-        result_path = save_result_image(result.result, task.task_id)
-        task.result_path = result_path
+        asyncio.create_task(save_result_image(result.result, task.task_id)).add_done_callback(
+            lambda fut: update_task(task.task_id, "completed", result_path=fut.result())
+        )
         task.status = "completed"
-        
-        # Update database with completed status and result path
-        update_task(task.task_id, "completed", result_path=result_path)
         
         # Clean up cache files after successful processing
         task.cleanup_files()
+        cleanup_task_files(task.task_id)
     except Exception as e:
         error_message = str(e)
         task.status = "failed"
@@ -345,8 +343,27 @@ async def process_batch_task(task: QueueElement):
         
         # Clean up cache files even on error
         task.cleanup_files()
+        cleanup_task_files(task.task_id)
     finally:
-        await executor_instances.free_executor(instance)
+        if instance:  # Only try to free the executor if it was assigned
+            await executor_instances.free_executor(instance)
+
+def cleanup_task_files(task_id):
+    """Clean up any files in upload-cache associated with this task"""
+    try:
+        upload_cache_dir = "upload-cache"
+        if os.path.exists(upload_cache_dir):
+            for filename in os.listdir(upload_cache_dir):
+                if task_id in filename:
+                    file_path = os.path.join(upload_cache_dir, filename)
+                    if os.path.isfile(file_path):
+                        try:
+                            os.remove(file_path)
+                            logger.info(f"Removed cache file for task {task_id}: {file_path}")
+                        except Exception as e:
+                            logger.error(f"Error removing cache file {file_path}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in cleanup_task_files for task {task_id}: {str(e)}")
 
 @app.post("/queue/single", response_model=TaskStatus, tags=["queue"])
 async def queue_single_image(
@@ -375,23 +392,28 @@ async def queue_single_image(
 @app.get("/queue/single/{task_id}", response_model=Dict[str, Any], tags=["queue"])
 async def get_single_task_status(task_id: str):
     """Get the status of a single image task."""
-    task = task_queue.get_task(task_id)
-    if not task:
-        raise HTTPException(404, detail=f"Task {task_id} not found")
+    # Try database first
+    task_data = get_task(task_id)
+    if not task_data:
+        # Fall back to in-memory
+        task = task_queue.get_task(task_id)
+        if not task:
+            raise HTTPException(404, detail=f"Task {task_id} not found")
+        task_data = task.to_dict()
     
     response = {
-        "task_id": task.task_id,
-        "status": task.status,
-        "created_at": task.created_at,
-        "queue_position": task_queue.get_pos(task) if task.status == "queued" else None,
-        "retries": task.retries,
+        "task_id": task_data["task_id"],
+        "status": task_data["status"],
+        "created_at": task_data["created_at"],
+        "queue_position": task_queue.get_pos(task_queue.get_task_by_id(task_id)) if task_data["status"] == "queued" else None,
+        "retries": task_data.get("retries", 0),
     }
     
-    if task.error_message:
-        response["error_message"] = task.error_message
+    if task_data.get("error_message"):
+        response["error_message"] = task_data["error_message"]
     
-    if task.result_path:
-        response["result_url"] = f"/static/results/{task.result_path}"
+    if task_data.get("result_path"):
+        response["result_url"] = get_result_path(task_data["result_path"])
     
     return response
 
@@ -531,10 +553,68 @@ async def queue_status():
         "connected_executors": sum(1 for inst in executor_instances.list if inst.consecutive_errors == 0)
     }
 
+@app.get("/queue/resume", response_model=Dict[str, Any], tags=["queue"])
+async def get_queued_tasks(background_tasks: BackgroundTasks):
+    """Get all tasks in the queue and resume processing them"""
+    # Get all tasks with status "queued" from the database
+    from server.database import get_queued_tasks
+    queued_tasks = []
+    try:
+        queued_tasks = get_queued_tasks(50)  # Limit to 50 tasks
+    except Exception as e:
+        logger.error(f"Error getting queued tasks: {e}")
+        queued_tasks = []
+    
+    # Process each task in the background
+    resumed_tasks = 0
+    for task_data in queued_tasks:
+        try:
+            # Get task config
+            config_obj = Config.parse_raw(task_data.get("config", "{}"))
+            
+            # Create a dummy request object
+            req = Request({"type": "http"})
+            
+            # Create a new task
+            batch_id = task_data.get("batch_id")
+            task = QueueElement(req, None, config_obj, priority=1 if batch_id else 2, batch_id=batch_id)
+            task.task_id = task_data["task_id"]
+            task.status = "queued"
+            
+            # Update database status
+            update_task(task.task_id, "queued", error_message="Resuming after server restart")
+            
+            # Add to queue and process
+            task_queue.add_task(task)
+            
+            # Process based on whether it's a batch task or single task
+            if batch_id:
+                background_tasks.add_task(process_batch_task, task)
+            else:
+                background_tasks.add_task(process_single_image_task, task)
+            
+            resumed_tasks += 1
+            
+        except Exception as e:
+            logger.error(f"Error resuming task {task_data['task_id']}: {e}")
+    
+    return {
+        "queued_tasks": len(queued_tasks),
+        "resumed_tasks": resumed_tasks,
+        "message": f"Resumed {resumed_tasks} of {len(queued_tasks)} queued tasks"
+    }
+
 @app.get("/", response_class=HTMLResponse,tags=["ui"])
 async def index() -> HTMLResponse:
     script_directory = Path(__file__).parent
     html_file = script_directory / "index.html"
+    html_content = html_file.read_text(encoding="utf-8")
+    return HTMLResponse(content=html_content)
+
+@app.get("/read", response_class=HTMLResponse, tags=["ui"])
+async def read():
+    script_directory = Path(__file__).parent
+    html_file = script_directory / "read.html"
     html_content = html_file.read_text(encoding="utf-8")
     return HTMLResponse(content=html_content)
 
@@ -550,19 +630,247 @@ async def start_translator():
     """Start a new translator client process."""
     try:
         port = int(os.getenv("PORT", 8000)) + 1
+        # Get the current host from environment or use the same as the main server
+        current_host = os.getenv("HOST", "127.0.0.1")
+        
         # Check if the translator client is already running
-        for instance in executor_instances.list:
-            if instance.ip == "127.0.0.1" and instance.port == port:
+        # Verify if the port is actually in use
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            if sock.connect_ex((current_host, port)) == 0:
                 logger.info(f"Translator client already running on port {port}")
                 return {"message": f"Translator client already running on port {port}"}
         
         # Start a new translator client process
-        start_translator_client_proc("127.0.0.1", port, nonce, Namespace())
+        start_translator_client_proc(current_host, port, nonce, Namespace())
         logger.info(f"Translator client started on port {port}")
         return {"message": f"Translator client started on port {port}"}
     except Exception as e:
         logger.error(f"Failed to start translator client: {e}")
         return {"error": "Failed to start translator client"}
+
+@app.get("/proxy/mangadex/chapter/{chapter_id}", tags=["proxy"])
+async def proxy_mangadex_chapter(chapter_id: str):
+    """Proxy for MangaDex API to avoid CORS issues"""
+    url = f"https://api.mangadex.org/at-home/server/{chapter_id}?forcePort443=false"
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            return response.json()
+    except Exception as e:
+        logger.error(f"Error proxying MangaDex API: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch from MangaDex: {str(e)}")
+
+@app.get("/proxy/mangadex/image/{chapter_hash}/{filename}", tags=["proxy"], response_class=StreamingResponse)
+async def proxy_mangadex_image(chapter_hash: str, filename: str, base_url: str = None):
+    """Proxy for MangaDex images to avoid CORS issues"""
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url parameter is required")
+    
+    url = f"{base_url}/data/{chapter_hash}/{filename}"
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, follow_redirects=True)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="Failed to fetch image from MangaDex")
+            
+            # Get the content type from the response headers, default to application/octet-stream
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            
+            return StreamingResponse(io.BytesIO(response.content), media_type=content_type)
+    except Exception as e:
+        logger.error(f"Error proxying MangaDex image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch image from MangaDex: {str(e)}")
+
+@app.post("/mangadex/process/chapter/{chapter_id}", tags=["mangadex"], response_model=BatchStatus)
+async def process_mangadex_chapter(
+    chapter_id: str,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    config: str = Form("{}"),
+):
+    """Automatically download and process a MangaDex chapter"""
+    logger.info(f"Processing MangaDex chapter: {chapter_id}")
+    
+    # Step 1: Get chapter metadata to get manga title and chapter number
+    metadata_url = f"https://api.mangadex.org/chapter/{chapter_id}?includes[]=scanlation_group&includes[]=manga&includes[]=user"
+    chapter_url = f"https://api.mangadex.org/at-home/server/{chapter_id}?forcePort443=false"
+    
+    try:
+        # Create temporary directory for this chapter in upload-cache
+        temp_dir = os.path.join("upload-cache", f"mangadex-{chapter_id}")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Create httpx client with longer timeout
+        timeout = httpx.Timeout(30.0, connect=60.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # Fetch chapter metadata
+            metadata_response = await client.get(metadata_url)
+            if metadata_response.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"Failed to fetch chapter metadata: HTTP {metadata_response.status_code}")
+            
+            metadata = metadata_response.json()
+            if metadata.get("result") != "ok":
+                raise HTTPException(status_code=400, detail=f"Failed to fetch chapter metadata: {metadata.get('errors', 'Unknown error')}")
+            
+            # Extract manga title and chapter number
+            manga_title = "Unknown Manga"
+            chapter_num = metadata["data"]["attributes"]["chapter"] or "unknown"
+            
+            for relationship in metadata["data"]["relationships"]:
+                if relationship["type"] == "manga":
+                    manga_title = relationship["attributes"]["title"].get("en") or next(iter(relationship["attributes"]["title"].values()))
+                    break
+            
+            # Fetch chapter data with image URLs
+            chapter_response = await client.get(chapter_url)
+            if chapter_response.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"Failed to fetch chapter data: HTTP {chapter_response.status_code}")
+            
+            chapter_data = chapter_response.json()
+            if chapter_data.get("result") != "ok":
+                raise HTTPException(status_code=400, detail=f"Failed to fetch chapter data: {chapter_data.get('errors', 'Unknown error')}")
+            
+            base_url = chapter_data["baseUrl"]
+            chapter_hash = chapter_data["chapter"]["hash"]
+            image_files = chapter_data["chapter"]["data"]
+            
+            logger.info(f"Downloading {len(image_files)} images for {manga_title} Chapter {chapter_num}")
+            
+            # Step 2: Download all images while preserving order
+            successful_downloads = 0
+            failed_downloads = 0
+            
+            # Modified download function to maintain order
+            async def download_image(image_file, index):
+                # Extract page number from filename (e.g., "r1-..." -> 1)
+                try:
+                    # Extract the page number from the r{number}- prefix
+                    page_number = int(image_file.split('-')[0][1:])
+                except (ValueError, IndexError):
+                    # Fallback to the index if we can't parse the page number
+                    page_number = index + 1
+                
+                # Create a filename that preserves the original order
+                ordered_filename = f"{page_number:03d}_{image_file}"
+                image_url = f"{base_url}/data/{chapter_hash}/{image_file}"
+                save_path = os.path.join(temp_dir, ordered_filename)
+                
+                # Retry up to 3 times for each image
+                max_retries = 3
+                retry_count = 0
+                
+                while retry_count < max_retries:
+                    try:
+                        # Download image with increased timeout
+                        logger.info(f"Downloading image {index+1}/{len(image_files)}: {image_file} (attempt {retry_count+1})")
+                        image_response = await client.get(
+                            image_url, 
+                            follow_redirects=True,
+                            timeout=httpx.Timeout(30.0)  # Individual timeout for each request
+                        )
+                        
+                        if image_response.status_code != 200:
+                            logger.warning(f"Failed to download image {image_file}: HTTP {image_response.status_code}")
+                            retry_count += 1
+                            await asyncio.sleep(1)  # Wait before retrying
+                            continue
+                        
+                        # Save image to disk with ordered filename
+                        with open(save_path, "wb") as f:
+                            f.write(image_response.content)
+                        
+                        logger.info(f"Downloaded image {index+1}/{len(image_files)}: {image_file} as {ordered_filename}")
+                        return True
+                        
+                    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ReadError) as e:
+                        retry_count += 1
+                        logger.warning(f"Timeout when downloading image {image_file} (attempt {retry_count}): {str(e)}")
+                        await asyncio.sleep(2)  # Wait longer before retrying
+                    except Exception as e:
+                        retry_count += 1
+                        logger.warning(f"Error downloading image {image_file} (attempt {retry_count}): {str(e)}")
+                        await asyncio.sleep(1)
+                
+                logger.error(f"Failed to download image {image_file} after {max_retries} attempts")
+                return False
+            
+            # Download images sequentially to maintain order
+            for i, image_file in enumerate(image_files):
+                success = await download_image(image_file, i)
+                if success:
+                    successful_downloads += 1
+                else:
+                    failed_downloads += 1
+            
+            # Check if we have any successful downloads
+            if successful_downloads == 0:
+                raise HTTPException(status_code=500, detail="Failed to download any images from MangaDex")
+            
+            logger.info(f"Downloaded {successful_downloads} of {len(image_files)} images successfully (failed: {failed_downloads})")
+            
+            # Step 3: Create a batch with the manga title and chapter number
+            batch_name = f"{manga_title} - Chapter {chapter_num}"
+            batch_description = f"MangaDex Chapter {chapter_id} downloaded on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            
+            batch_req = BatchRequest(name=batch_name, description=batch_description)
+            batch = task_queue.create_batch(batch_req.name, batch_req.description)
+            
+            # Save to database
+            db_create_batch(batch.batch_id, batch_req.name, batch_req.description)
+            
+            # Step 4: Add all downloaded images to the batch in correct order
+            config_obj = Config.parse_raw(config)
+            tasks_added = 0
+            
+            # Get files and sort them by numeric prefix to ensure correct order
+            downloaded_files = sorted(os.listdir(temp_dir))
+            
+            for i, image_file in enumerate(downloaded_files):
+                image_path = os.path.join(temp_dir, image_file)
+                
+                try:
+                    with open(image_path, "rb") as f:
+                        img_data = f.read()
+                    
+                    # Create PIL image
+                    img = await to_pil_image(img_data)
+                    
+                    # Create task with original page number as order_index
+                    page_number = int(image_file.split('_')[0])
+                    task = QueueElement(req, img, config_obj, priority=1, batch_id=batch.batch_id)
+                    
+                    # Save to database with order_index to ensure correct order when retrieving
+                    save_task(task.task_id, batch.batch_id, "queued", config_obj.dict(), 
+                              order_index=page_number, 
+                              original_filename=image_file)
+                    
+                    # Add to queue
+                    task_queue.add_task(task)
+                    background_tasks.add_task(process_batch_task, task)
+                    tasks_added += 1
+                    
+                    # Remove the file after adding to queue to save space
+                    os.remove(image_path)
+                except Exception as e:
+                    logger.error(f"Error adding image {image_file} to batch: {str(e)}")
+            
+            # Clean up the temporary directory
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"Removed temporary directory: {temp_dir}")
+            except Exception as e:
+                logger.warning(f"Could not remove temporary directory {temp_dir}: {str(e)}")
+            
+            logger.info(f"Created batch {batch.batch_id} with {tasks_added} images (failed downloads: {failed_downloads})")
+            
+            # Return batch information
+            return BatchStatus(**batch.to_dict())
+            
+    except Exception as e:
+        error_message = str(e) or repr(e)
+        logger.error(f"Error processing MangaDex chapter: {error_message}")
+        raise HTTPException(status_code=500, detail=f"Failed to process MangaDex chapter: {error_message}")
 
 def generate_nonce():
     return secrets.token_hex(16)
@@ -623,6 +931,9 @@ def prepare(args):
     else:
         nonce = args.nonce
     
+    # Set the host in environment variable for other functions to use
+    os.environ["HOST"] = args.host
+    
     # Set up CPU core utilization
     import multiprocessing
     import torch
@@ -641,80 +952,12 @@ def prepare(args):
     # Create required directories with absolute paths
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # /app
     upload_cache_dir = os.path.join(base_dir, "upload-cache")
-    history_dir = os.path.join(base_dir, "history")
-    results_dir = os.path.join(history_dir, "results")  # /app/history/results
     
     os.makedirs(upload_cache_dir, exist_ok=True)
-    os.makedirs(results_dir, exist_ok=True)
-    
-    # Create static directory if it doesn't exist
-    server_dir = os.path.dirname(os.path.abspath(__file__))  # /app/server
-    static_dir = os.path.join(server_dir, "static")
-    os.makedirs(static_dir, exist_ok=True)
-    
-    # Define the static results directory
-    static_results_dir = os.path.join(static_dir, "results")
-    
-    # Create symbolic link for results in static folder (fix: always recreate if missing or broken)
-    # Ensure the symlink points to the correct results directory
-    if os.path.islink(static_results_dir) or os.path.exists(static_results_dir):
-        try:
-            if os.path.islink(static_results_dir):
-                os.unlink(static_results_dir)
-            else:
-                shutil.rmtree(static_results_dir, ignore_errors=True)
-            logger.info(f"Removed existing symlink or directory: {static_results_dir}")
-        except Exception as e:
-            logger.error(f"Error removing existing symlink or directory {static_results_dir}: {str(e)}")
-    
-    try:
-        os.symlink(os.path.abspath(results_dir), static_results_dir, target_is_directory=True)
-        logger.info(f"Created symlink: {static_results_dir} -> {os.path.abspath(results_dir)}")
-    except Exception as e:
-        logger.error(f"Error creating symlink for results: {str(e)}")
-        # As a fallback, copy the results directory
-        try:
-            shutil.copytree(results_dir, static_results_dir, dirs_exist_ok=True)
-            logger.info(f"Copied directory: {results_dir} -> {static_results_dir}")
-        except Exception as copy_e:
-            logger.error(f"Error copying directory: {copy_e}")
-    static_results_dir = os.path.join(static_dir, "results")
 
-    # Log paths for debugging
-    logger.info(f"Results directory: {os.path.abspath(results_dir)}")
-    logger.info(f"Static results directory: {os.path.abspath(static_results_dir)}")
-
-    # Remove broken symlink or folder if exists
-    if os.path.islink(static_results_dir):
-        try:
-            os.unlink(static_results_dir)
-            logger.info(f"Removed existing symlink: {static_results_dir}")
-        except Exception as e:
-            logger.error(f"Error removing symlink {static_results_dir}: {str(e)}")
-    elif os.path.exists(static_results_dir):
-        try:
-            shutil.rmtree(static_results_dir, ignore_errors=True)
-            logger.info(f"Removed existing directory: {static_results_dir}")
-        except Exception as e:
-            logger.error(f"Error removing directory {static_results_dir}: {str(e)}")
-
-    # Create a fresh symlink
-    try:
-        os.symlink(os.path.abspath(results_dir), static_results_dir, target_is_directory=True)
-        logger.info(f"Created symlink: {static_results_dir} -> {os.path.abspath(results_dir)}")
-    except Exception as e:
-        logger.error(f"Error creating symlink for results: {str(e)}")
-        
-        # Copy files instead if symlink fails
-        try:
-            shutil.copytree(results_dir, static_results_dir, dirs_exist_ok=True)
-            logger.info(f"Copied directory: {results_dir} -> {static_results_dir}")
-        except Exception as copy_e:
-            logger.error(f"Error copying directory: {copy_e}")
-    
     if args.start_instance:
         port = int(os.getenv("PORT", 8000))
-        return start_translator_client_proc("127.0.0.1", port + 1, nonce, args)
+        return start_translator_client_proc(args.host, port + 1, nonce, args)
     
     # Clean up old cache files
     if os.path.exists(upload_cache_dir):

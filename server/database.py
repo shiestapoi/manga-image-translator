@@ -5,16 +5,20 @@ import logging
 import mysql.connector
 from mysql.connector import pooling
 from typing import Dict, List, Any, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logger = logging.getLogger("database")
 
-# Database connection parameters from environment variables
-DB_HOST = os.getenv('MYSQL_HOST', 'localhost')
-DB_PORT = int(os.getenv('MYSQL_PORT', '3306'))
-DB_USER = os.getenv('MYSQL_USER', 'root')
-DB_PASSWORD = os.getenv('MYSQL_PASSWORD', 'root')
-DB_NAME = os.getenv('MYSQL_DATABASE', 'manga_translator')
+# Database connection parameters from environment variables (without fallbacks)
+DB_HOST = os.getenv('MYSQL_HOST')
+DB_PORT = int(os.getenv('MYSQL_PORT', '3306'))  # Keep fallback for port to avoid int conversion errors
+DB_USER = os.getenv('MYSQL_USER')
+DB_PASSWORD = os.getenv('MYSQL_PASSWORD')
+DB_NAME = os.getenv('MYSQL_DATABASE')
 
 # Create connection pool
 try:
@@ -53,7 +57,9 @@ def init_database():
             retries INT NOT NULL DEFAULT 0,
             error_message TEXT NULL,
             result_path TEXT NULL,
-            config JSON NULL
+            config JSON NULL,
+            original_filename VARCHAR(255) NULL,
+            order_index INT NULL
         )
         """)
         
@@ -85,8 +91,9 @@ def init_database():
 
 # Task operations
 def save_task(task_id: str, batch_id: Optional[str] = None, 
-              status: str = "queued", config: Optional[Dict] = None) -> bool:
-    """Save a new task to the database"""
+              status: str = "queued", config: Optional[Dict] = None, 
+              original_filename: Optional[str] = None, order_index: Optional[int] = None) -> bool:
+    """Save a new task to the database with ordering information"""
     if not connection_pool:
         logger.error("Cannot save task: connection pool is None")
         return False
@@ -97,10 +104,28 @@ def save_task(task_id: str, batch_id: Optional[str] = None,
         
         config_json = json.dumps(config) if config else None
         
-        cursor.execute("""
-        INSERT INTO tasks (task_id, batch_id, status, config)
-        VALUES (%s, %s, %s, %s)
-        """, (task_id, batch_id, status, config_json))
+        # Check if the task already exists
+        cursor.execute("SELECT * FROM tasks WHERE task_id = %s", (task_id,))
+        existing_task = cursor.fetchone()
+        
+        if existing_task:
+            # Update existing task
+            cursor.execute("""
+            UPDATE tasks SET 
+                status = %s, 
+                config = %s,
+                batch_id = %s,
+                original_filename = %s,
+                order_index = %s
+            WHERE task_id = %s
+            """, (status, config_json, batch_id, original_filename, order_index, task_id))
+        else:
+            # Insert new task with ordering information
+            cursor.execute("""
+            INSERT INTO tasks 
+                (task_id, batch_id, status, created_at, config, original_filename, order_index) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (task_id, batch_id, status, datetime.datetime.now(), config_json, original_filename, order_index))
         
         connection.commit()
         logger.info(f"Task {task_id} saved to database")
@@ -256,6 +281,80 @@ def get_recent_tasks(limit: int = 50) -> List[Dict[str, Any]]:
             cursor.close()
             connection.close()
 
+def get_queued_tasks(limit: int = 50) -> List[Dict[str, Any]]:
+    """Get all tasks with status 'queued'"""
+    if not connection_pool:
+        logger.error("Cannot get queued tasks: connection pool is None")
+        return []
+    
+    try:
+        connection = connection_pool.get_connection()
+        cursor = connection.cursor(dictionary=True)
+        
+        cursor.execute("""
+        SELECT * FROM tasks 
+        WHERE status = 'queued' 
+        ORDER BY created_at ASC
+        LIMIT %s
+        """, (limit,))
+        
+        tasks = cursor.fetchall()
+        
+        # Parse config JSON
+        for task in tasks:
+            if task.get("config"):
+                try:
+                    task["config"] = json.loads(task["config"])
+                except:
+                    task["config"] = {}
+        
+        return tasks
+    except Exception as e:
+        logger.error(f"Error getting queued tasks: {e}")
+        return []
+    finally:
+        if 'connection' in locals() and connection:
+            cursor.close()
+            connection.close()
+
+def get_batch_tasks(batch_id: str) -> List[Dict[str, Any]]:
+    """Get all tasks for a batch, ordered by the order_index field"""
+    if not connection_pool:
+        logger.error("Cannot get batch tasks: connection pool is None")
+        return []
+    
+    try:
+        connection = connection_pool.get_connection()
+        cursor = connection.cursor(dictionary=True)
+        
+        cursor.execute("""
+        SELECT * FROM tasks 
+        WHERE batch_id = %s 
+        ORDER BY order_index ASC, 
+                 original_filename ASC, 
+                 created_at ASC
+        """, (batch_id,))
+        
+        tasks = cursor.fetchall()
+        
+        # Parse config JSON
+        for task in tasks:
+            if task.get("config"):
+                task["config"] = json.loads(task["config"])
+            # Convert result_path to a public URL
+            if task.get("result_path"):
+                from server.storage import get_result_path
+                task["result_url"] = get_result_path(task["result_path"])
+        
+        return tasks
+    except Exception as e:
+        logger.error(f"Error getting batch tasks from database: {e}")
+        return []
+    finally:
+        if 'connection' in locals() and connection:
+            cursor.close()
+            connection.close()
+
 # Batch operations
 def create_batch(batch_id: str, name: str, description: Optional[str] = None) -> bool:
     """Create a new batch in the database"""
@@ -313,37 +412,6 @@ def get_batch(batch_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error getting batch {batch_id}: {e}")
         return None
-    finally:
-        if 'connection' in locals() and connection:
-            cursor.close()
-            connection.close()
-
-def get_batch_tasks(batch_id: str) -> List[Dict[str, Any]]:
-    """Get all tasks belonging to a batch"""
-    if not connection_pool:
-        logger.error("Cannot get batch tasks: connection pool is None")
-        return []
-    
-    try:
-        connection = connection_pool.get_connection()
-        cursor = connection.cursor(dictionary=True)
-        
-        cursor.execute("""
-        SELECT * FROM tasks WHERE batch_id = %s
-        ORDER BY created_at DESC
-        """, (batch_id,))
-        
-        tasks = cursor.fetchall()
-        
-        # Parse config JSON
-        for task in tasks:
-            if task.get("config"):
-                task["config"] = json.loads(task["config"])
-        
-        return tasks
-    except Exception as e:
-        logger.error(f"Error getting tasks for batch {batch_id}: {e}")
-        return []
     finally:
         if 'connection' in locals() and connection:
             cursor.close()

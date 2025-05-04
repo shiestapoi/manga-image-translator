@@ -3,6 +3,7 @@ import os
 import datetime
 import uuid
 import json
+import logging
 from typing import List, Optional, Dict, Any
 from collections import deque
 
@@ -14,41 +15,26 @@ from manga_translator import Config
 from server.instance import executor_instances
 from server.sent_data_internal import NotifyType
 
-class QueueElement:
-    req: Request
-    image: Image.Image | str
-    config: Config
-    task_id: str
-    created_at: datetime.datetime
-    status: str
-    priority: int
-    batch_id: Optional[str] = None
-    retries: int = 0
-    max_retries: int = 3
-    result_path: Optional[str] = None
-    error_message: Optional[str] = None
+logger = logging.getLogger("myqueue")
 
-    def __init__(self, req: Request, image: Image.Image, config: Config, priority: int = 0, batch_id: Optional[str] = None):
-        self.req = req
-        self.task_id = str(uuid.uuid4())
-        self.created_at = datetime.datetime.now()
+class QueueElement:
+    def __init__(self, request, image, config, priority=0, batch_id=None, order_index=None):
+        self.task_id = uuid.uuid4().hex
+        self.request = request
+        self.image = image
+        self.config = config
+        self.result = None
+        self.error = None
+        self.error_message = None
         self.status = "queued"
         self.priority = priority
         self.batch_id = batch_id
-        self.config = config  # <--- fix: set config attribute
-        
-        # Store images properly
-        cache_dir = os.path.join("upload-cache", datetime.datetime.now().strftime("%Y%m%d"))
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        # Store image in filesystem if needed
-        if isinstance(image, Image.Image):
-            self.image_path = os.path.join(cache_dir, f"{self.task_id}.png")
-            image.save(self.image_path)
-            self.image = self.image_path
-        else:
-            self.image = image
-            self.image_path = image
+        self.order_index = order_index  # Store order index for sorting
+        self.temp_filepath = None
+        self.created_at = datetime.datetime.now()  # Add created_at timestamp
+        self.result_path = None  # Add result_path attribute
+        self.retries = 0  # Initialize retries counter
+        self.max_retries = 3  # Maximum number of retries
 
     def get_image(self) -> Image.Image:
         if isinstance(self.image, str):
@@ -65,15 +51,27 @@ class QueueElement:
     def cleanup_files(self):
         """Explicitly clean up any temporary files associated with this task"""
         try:
-            if hasattr(self, 'image_path') and os.path.exists(self.image_path):
-                os.remove(self.image_path)
-                print(f"Cleaned up task {self.task_id} cache file: {self.image_path}")
+            # Clean up temp file if it exists
+            if hasattr(self, 'temp_filepath') and self.temp_filepath and os.path.exists(self.temp_filepath):
+                os.remove(self.temp_filepath)
+                logger.info(f"Removed temporary file: {self.temp_filepath}")
+                self.temp_filepath = None
+                
+            # Also check for any files in upload-cache with this task_id
+            upload_cache_dir = "upload-cache"
+            if os.path.exists(upload_cache_dir):
+                for filename in os.listdir(upload_cache_dir):
+                    if self.task_id in filename:
+                        file_path = os.path.join(upload_cache_dir, filename)
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                            logger.info(f"Removed cache file: {file_path}")
         except Exception as e:
-            print(f"Error cleaning up task {self.task_id} files: {str(e)}")
+            logger.error(f"Error cleaning up files for task {self.task_id}: {str(e)}")
 
     async def is_client_disconnected(self) -> bool:
         try:
-            if await self.req.is_disconnected():
+            if await self.request.is_disconnected():
                 self.status = "disconnected"
                 return True
         except Exception:
@@ -90,8 +88,9 @@ class QueueElement:
             "status": self.status,
             "priority": self.priority,
             "batch_id": self.batch_id,
-            "retries": self.retries,
-            "result_path": self.result_path,
+            "order_index": self.order_index,
+            "retries": getattr(self, 'retries', 0),
+            "result_path": getattr(self, 'result_path', None),
             "error_message": self.error_message,
             "config": json.loads(self.config.json()) if self.config else None
         }
@@ -118,7 +117,10 @@ class BatchJob:
         
     def update_status(self):
         """Update batch status based on task statuses"""
-        if self.failed_tasks == self.total_tasks:
+        if self.total_tasks == 0:
+            # If no tasks, keep as "created"
+            self.status = "created"
+        elif self.failed_tasks == self.total_tasks:
             self.status = "failed"
         elif self.completed_tasks + self.failed_tasks == self.total_tasks:
             self.status = "completed"
@@ -127,6 +129,26 @@ class BatchJob:
         else:
             self.status = "queued"
         self.updated_at = datetime.datetime.now()
+        
+    def get_sorted_tasks(self, task_list):
+        """Sort tasks by order_index if available"""
+        # First prioritize tasks with order_index
+        tasks_with_order = []
+        tasks_without_order = []
+        
+        for task in task_list:
+            if hasattr(task, 'order_index') and task.order_index is not None:
+                tasks_with_order.append(task)
+            else:
+                tasks_without_order.append(task)
+        
+        # Sort tasks with order_index
+        sorted_tasks = sorted(tasks_with_order, key=lambda x: x.order_index)
+        
+        # Append tasks without order_index
+        sorted_tasks.extend(tasks_without_order)
+        
+        return sorted_tasks
         
     def to_dict(self) -> Dict[str, Any]:
         """Convert batch to dict for API responses"""
@@ -144,55 +166,15 @@ class BatchJob:
         }
 
 class TaskHistory:
-    """Stores task history and results"""
+    """Stores task history and results using database"""
     def __init__(self, max_history: int = 1000):
         self.history: Dict[str, QueueElement] = {}
         self.batch_jobs: Dict[str, BatchJob] = {}
         self.max_history = max_history
-        self.history_file = "task_history.json"
-        self.batch_file = "batch_history.json"
         
-        # Create history directory if it doesn't exist
-        os.makedirs("history", exist_ok=True)
+        # Create results directory if it doesn't exist
+        os.makedirs("upload-cache", exist_ok=True)
         
-        # Load history from disk if available
-        self._load_history()
-        
-    def _load_history(self):
-        """Load history from disk"""
-        history_path = os.path.join("history", self.history_file)
-        batch_path = os.path.join("history", self.batch_file)
-        
-        try:
-            if os.path.exists(history_path):
-                with open(history_path, 'r') as f:
-                    history_data = json.load(f)
-                    # We can't fully reconstruct QueueElement objects from JSON
-                    # but we can store the metadata for the UI
-                    print(f"Loaded {len(history_data)} tasks from history")
-        except Exception as e:
-            print(f"Error loading task history: {str(e)}")
-            
-        try:
-            if os.path.exists(batch_path):
-                with open(batch_path, 'r') as f:
-                    batch_data = json.load(f)
-                    for batch_dict in batch_data:
-                        batch = BatchJob(batch_dict["name"], batch_dict.get("description"))
-                        batch.batch_id = batch_dict["batch_id"]
-                        batch.created_at = datetime.datetime.fromisoformat(batch_dict["created_at"])
-                        batch.updated_at = datetime.datetime.fromisoformat(batch_dict["updated_at"])
-                        batch.status = batch_dict["status"]
-                        batch.total_tasks = batch_dict["total_tasks"]
-                        batch.completed_tasks = batch_dict["completed_tasks"]
-                        batch.failed_tasks = batch_dict["failed_tasks"]
-                        # Safely get tasks, defaulting to an empty list if missing
-                        batch.tasks = batch_dict.get("tasks", []) 
-                        self.batch_jobs[batch.batch_id] = batch
-                    print(f"Loaded {len(self.batch_jobs)} batch jobs from history")
-        except Exception as e:
-            print(f"Error loading batch history: {str(e)}")
-    
     def add_task(self, task: QueueElement):
         """Add task to history"""
         self.history[task.task_id] = task
@@ -205,30 +187,19 @@ class TaskHistory:
             )[:len(self.history) - self.max_history]
             
             for task_id, task in oldest_tasks:
-                # Clean up task files
+                # Clean up task files from cache
                 if task.image_path and os.path.exists(task.image_path):
                     try:
                         os.remove(task.image_path)
                     except Exception:
                         pass
-                
-                if task.result_path and os.path.exists(task.result_path):
-                    try:
-                        os.remove(task.result_path)
-                    except Exception:
-                        pass
                         
                 del self.history[task_id]
-                
-        # Save history periodically (not on every task to avoid overhead)
-        if len(self.history) % 10 == 0:
-            self._save_history()
     
     def create_batch(self, name: str, description: Optional[str] = None) -> BatchJob:
         """Create a new batch job"""
         batch = BatchJob(name, description)
         self.batch_jobs[batch.batch_id] = batch
-        self._save_batch_history()
         return batch
     
     def get_batch(self, batch_id: str) -> Optional[BatchJob]:
@@ -247,7 +218,6 @@ class TaskHistory:
             batch.failed_tasks += 1
             
         batch.update_status()
-        self._save_batch_history()
     
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get task history by ID"""
@@ -257,59 +227,56 @@ class TaskHistory:
         return None
     
     def get_recent_tasks(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Get recent task history"""
-        recent_tasks = sorted(
-            self.history.values(), 
-            key=lambda x: x.created_at, 
-            reverse=True
-        )[:limit]
-        
-        return [task.to_dict() for task in recent_tasks]
+        """Get recent task history - use database implementation instead"""
+        from server.database import get_recent_tasks
+        try:
+            return get_recent_tasks(limit)
+        except Exception as e:
+            print(f"Error getting tasks from database, falling back to memory: {e}")
+            # Fallback to in-memory
+            recent_tasks = sorted(
+                self.history.values(), 
+                key=lambda x: x.created_at, 
+                reverse=True
+            )[:limit]
+            
+            return [task.to_dict() for task in recent_tasks]
     
     def get_batch_tasks(self, batch_id: str) -> List[Dict[str, Any]]:
-        """Get all tasks in a batch"""
-        batch = self.batch_jobs.get(batch_id)
-        if not batch:
-            return []
+        """Get all tasks in a batch - use database implementation instead"""
+        from server.database import get_batch_tasks
+        try:
+            return get_batch_tasks(batch_id)
+        except Exception as e:
+            print(f"Error getting batch tasks from database, falling back to memory: {e}")
+            # Fallback to in-memory
+            batch = self.batch_jobs.get(batch_id)
+            if not batch:
+                return []
+                
+            tasks = [
+                self.get_task(task_id) for task_id in batch.tasks
+                if task_id in self.history
+            ]
             
-        return [
-            self.get_task(task_id) for task_id in batch.tasks
-            if task_id in self.history
-        ]
+            # Sort tasks by order_index if available
+            return sorted(tasks, key=lambda x: x.get('order_index', float('inf')))
     
     def list_batches(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """List recent batch jobs"""
-        recent_batches = sorted(
-            self.batch_jobs.values(), 
-            key=lambda x: x.updated_at, 
-            reverse=True
-        )[:limit]
-        
-        return [batch.to_dict() for batch in recent_batches]
-    
-    def _save_history(self):
-        """Save task history to disk"""
+        """List recent batch jobs - use database implementation instead"""
+        from server.database import list_batches
         try:
-            history_data = [
-                task.to_dict() for task in self.history.values()
-            ]
-            
-            with open(os.path.join("history", self.history_file), 'w') as f:
-                json.dump(history_data, f)
+            return list_batches(limit)
         except Exception as e:
-            print(f"Error saving task history: {str(e)}")
-    
-    def _save_batch_history(self):
-        """Save batch history to disk"""
-        try:
-            batch_data = [
-                batch.to_dict() for batch in self.batch_jobs.values()
-            ]
+            print(f"Error listing batches from database, falling back to memory: {e}")
+            # Fallback to in-memory
+            recent_batches = sorted(
+                self.batch_jobs.values(), 
+                key=lambda x: x.updated_at, 
+                reverse=True
+            )[:limit]
             
-            with open(os.path.join("history", self.batch_file), 'w') as f:
-                json.dump(batch_data, f)
-        except Exception as e:
-            print(f"Error saving batch history: {str(e)}")
+            return [batch.to_dict() for batch in recent_batches]
 
 class TaskQueue:
     def __init__(self):
@@ -318,6 +285,7 @@ class TaskQueue:
         self.task_history = TaskHistory()
         self.periodic_cleanup_task = None
         self.lock = asyncio.Lock()
+        self.cleanup_interval = 3600  # 1 hour
     
     def _start_periodic_cleanup(self):
         """Start periodic cleanup of orphaned tasks"""
@@ -329,11 +297,12 @@ class TaskQueue:
         self._start_periodic_cleanup()
 
     async def _run_periodic_cleanup(self):
-        """Periodically clean up disconnected tasks"""
+        """Periodically clean up disconnected tasks and orphaned files"""
         while True:
             await asyncio.sleep(60)  # Run every minute
             try:
                 await self.cleanup_disconnected_tasks()
+                self.cleanup_upload_cache()
             except Exception as e:
                 print(f"Error in periodic cleanup: {str(e)}")
     
@@ -346,6 +315,52 @@ class TaskQueue:
             if len(self.queue) < original_length:
                 print(f"Cleaned up {original_length - len(self.queue)} disconnected tasks")
                 await self.update_event()
+
+    def cleanup_upload_cache(self):
+        """Clean up orphaned files in upload-cache directory"""
+        try:
+            upload_cache_dir = "upload-cache"
+            if not os.path.exists(upload_cache_dir):
+                return
+                
+            # Get all task IDs from current queue
+            active_task_ids = set()
+            for task in self.queue:
+                active_task_ids.add(task.task_id)
+                
+            # Add task IDs from recent tasks that aren't completed or failed
+            for task in self.task_history.history.values():
+                if task.status not in ["completed", "failed"]:
+                    active_task_ids.add(task.task_id)
+            
+            # Remove files that don't belong to active tasks
+            removed_count = 0
+            for filename in os.listdir(upload_cache_dir):
+                should_keep = False
+                file_path = os.path.join(upload_cache_dir, filename)
+                
+                # Skip directories like mangadex-* which might still be in use
+                if os.path.isdir(file_path):
+                    continue
+                    
+                # Check if this file belongs to an active task
+                for task_id in active_task_ids:
+                    if task_id in filename:
+                        should_keep = True
+                        break
+                        
+                # Remove the file if it's not needed
+                if not should_keep and os.path.isfile(file_path):
+                    try:
+                        os.remove(file_path)
+                        removed_count += 1
+                    except Exception as e:
+                        logger.error(f"Error removing file {file_path}: {str(e)}")
+            
+            if removed_count > 0:
+                logger.info(f"Cleaned up {removed_count} orphaned files from upload-cache")
+        except Exception as e:
+            logger.error(f"Error in cleanup_upload_cache: {str(e)}")
 
     def add_task(self, task: QueueElement):
         """Add a task to the queue"""

@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Reader - Long Strip Mode</title>
+    
+    <!-- Tailwind CSS - Updated to use the latest 3.x version -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Configure Tailwind with dark mode support
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        // Custom colors can be added here if needed
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Alpine.js -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Iconify -->
+    <script src="https://cdn.jsdelivr.net/npm/@iconify/iconify@2.2.0/dist/iconify.min.js"></script>
+    
+    <!-- Dark mode initialization -->
+    <script>
+        // Check dark mode preference on page load
+        if (localStorage.getItem('dark-mode') === 'true' || 
+            (!localStorage.getItem('dark-mode') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
+    
+    <style>
+        /* Custom scrollbar for the reader */
+        .reader-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .reader-container::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+        }
+
+        .reader-container::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+
+        .dark .reader-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .dark .reader-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .reader-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .dark .reader-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* Loading skeleton animation */
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 0.5;
+            }
+            50% {
+                opacity: 0.8;
+            }
+        }
+
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        /* Image zoom transition */
+        .manga-page {
+            transition: transform 0.2s ease-in-out;
+        }
+
+        /* Transition for light/dark mode */
+        .transition-colors {
+            transition-property: background-color, border-color, color, fill, stroke;
+            transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+            transition-duration: 300ms;
+        }
+
+        [x-cloak] { 
+            display: none !important; 
+        }
+
+        /* True longstrip style without gaps */
+        .manga-longstrip {
+            margin: 0 auto;
+            padding: 0;
+            gap: 0;
+            font-size: 0; /* Eliminate any whitespace between elements */
+            line-height: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .manga-longstrip .manga-page {
+            margin: 0;
+            padding: 0;
+            display: block;
+            line-height: 0;
+            font-size: 0;
+        }
+        
+        .manga-longstrip img {
+            display: block;
+            margin: 0;
+            padding: 0;
+            border-radius: 0;
+            box-shadow: none;
+            width: 100%;
+            height: auto;
+        }
+        
+        /* Eliminate any potential gaps */
+        .manga-longstrip * {
+            border: 0;
+            outline: 0;
+            vertical-align: bottom;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 transition-colors min-h-screen flex flex-col" 
+      x-data="mangaReader()" 
+      x-init="initialize()">
+    <!-- Header with navigation -->
+    <header class="bg-white dark:bg-gray-800 shadow-md transition-colors">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-4">
+                <a href="/" class="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300">
+                    <i class="iconify text-xl" data-icon="carbon:home"></i>
+                </a>
+                <h1 class="text-xl md:text-2xl font-bold text-gray-800 dark:text-white">Manga Reader</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <!-- Dark/Light Mode Toggle -->
+                <button @click="toggleDarkMode()" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                    <i class="iconify text-xl" :data-icon="isDarkMode ? 'carbon:sun' : 'carbon:moon'" 
+                       :class="isDarkMode ? 'text-yellow-300' : 'text-gray-700 dark:text-gray-300'"></i>
+                </button>
+                
+                <!-- Zoom Controls -->
+                <div class="hidden md:flex items-center bg-gray-200 dark:bg-gray-700 rounded-lg">
+                    <button @click="decreaseZoom()" class="p-2 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-l-lg">
+                        <i class="iconify text-xl" data-icon="carbon:zoom-out"></i>
+                    </button>
+                    <span class="px-2 text-sm text-gray-700 dark:text-gray-300" x-text="`${Math.round(zoomLevel * 100)}%`"></span>
+                    <button @click="increaseZoom()" class="p-2 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-r-lg">
+                        <i class="iconify text-xl" data-icon="carbon:zoom-in"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto px-4 py-6">
+        <!-- Batch Selection -->
+        <div x-show="!selectedBatch" class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-6 transition-colors">
+            <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-white">Select a Manga to Read</h2>
+            
+            <!-- Search and Filter -->
+            <div class="flex flex-col md:flex-row gap-4 mb-4">
+                <div class="flex-grow">
+                    <div class="relative">
+                        <i class="iconify absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500" data-icon="carbon:search"></i>
+                        <input 
+                            type="text" 
+                            x-model="searchQuery" 
+                            placeholder="Search batches..."
+                            class="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                        >
+                    </div>
+                </div>
+                <div class="md:w-1/4">
+                    <select 
+                        x-model="statusFilter"
+                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                    >
+                        <option value="">All Statuses</option>
+                        <option value="completed">Completed</option>
+                        <option value="created">Created</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Loading State -->
+            <div x-show="loadingBatches" class="space-y-4">
+                <template x-for="i in 3">
+                    <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 animate-pulse bg-gray-100 dark:bg-gray-700"></div>
+                </template>
+            </div>
+            
+            <!-- No Batches Message -->
+            <div x-show="!loadingBatches && filteredBatches.length === 0" class="text-center py-12">
+                <div class="inline-flex rounded-full bg-yellow-100 dark:bg-yellow-900 p-4 mb-4">
+                    <i class="iconify text-3xl text-yellow-500 dark:text-yellow-400" data-icon="carbon:warning"></i>
+                </div>
+                <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No manga batches found</h3>
+                <p class="text-gray-500 dark:text-gray-400">Try changing your search or filter, or process a new manga on the homepage.</p>
+            </div>
+            
+            <!-- Batch List -->
+            <div x-show="!loadingBatches && filteredBatches.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="batch in filteredBatches" :key="batch.batch_id">
+                    <div 
+                        class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
+                        :class="{'opacity-60': batch.status !== 'completed'}"
+                        @click="batch.status === 'completed' ? selectBatch(batch) : showIncompleteMessage(batch)"
+                    >
+                        <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="font-medium text-gray-800 dark:text-white truncate" x-text="batch.name"></h3>
+                            <span 
+                                class="text-xs px-2 py-1 rounded-full font-medium" 
+                                :class="{
+                                    'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200': batch.status === 'completed',
+                                    'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200': batch.status === 'queued',
+                                    'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200': batch.status === 'processing' || batch.status === 'in_progress'
+                                }"
+                                x-text="batch.status"
+                            ></span>
+                        </div>
+                        <div class="p-4">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="text-gray-600 dark:text-gray-400">Images:</span>
+                                <span class="text-gray-800 dark:text-gray-200" x-text="batch.total_tasks"></span>
+                            </div>
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="text-gray-600 dark:text-gray-400">Completed:</span>
+                                <span class="text-gray-800 dark:text-gray-200" x-text="batch.completed_tasks"></span>
+                            </div>
+                            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-2">
+                                <div 
+                                    class="bg-blue-600 h-2 rounded-full" 
+                                    :style="`width: ${(batch.completed_tasks / batch.total_tasks) * 100}%`"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Reader View -->
+        <div x-show="selectedBatch" class="transition-colors">
+            <!-- Reader Header -->
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-colors">
+                <div>
+                    <button 
+                        @click="returnToBatchSelection()" 
+                        class="mb-2 md:mb-0 inline-flex items-center text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
+                    >
+                        <i class="iconify mr-1" data-icon="carbon:arrow-left"></i>
+                        Back to Selection
+                    </button>
+                    <h2 class="text-xl font-bold text-gray-800 dark:text-white" x-text="selectedBatch?.name || ''"></h2>
+                </div>
+                
+                <div class="flex flex-wrap gap-2">
+                    <!-- Mobile Zoom Controls -->
+                    <div class="flex md:hidden items-center bg-gray-200 dark:bg-gray-700 rounded-lg">
+                        <button @click="decreaseZoom()" class="p-2 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-l-lg">
+                            <i class="iconify" data-icon="carbon:zoom-out"></i>
+                        </button>
+                        <span class="px-2 text-sm text-gray-700 dark:text-gray-300" x-text="`${Math.round(zoomLevel * 100)}%`"></span>
+                        <button @click="increaseZoom()" class="p-2 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-r-lg">
+                            <i class="iconify" data-icon="carbon:zoom-in"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- Jump to Top/Bottom -->
+                    <button @click="scrollToTop()" class="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
+                        <i class="iconify" data-icon="carbon:arrow-up"></i>
+                    </button>
+                    <button @click="scrollToBottom()" class="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
+                        <i class="iconify" data-icon="carbon:arrow-down"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Reader Container -->
+            <div 
+                id="readerContainer"
+                class="bg-white dark:bg-gray-800 rounded-lg shadow-md py-4 overflow-y-auto reader-container max-h-[calc(100vh-200px)] transition-colors"
+            >
+                <!-- Loading State -->
+                <div x-show="loadingPages" class="flex flex-col items-center space-y-4 py-8">
+                    <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p class="text-gray-700 dark:text-gray-300">Loading manga pages...</p>
+                </div>
+                
+                <!-- No Pages Message -->
+                <div x-show="!loadingPages && mangaPages.length === 0" class="text-center py-12">
+                    <div class="inline-flex rounded-full bg-red-100 dark:bg-red-900 p-4 mb-4">
+                        <i class="iconify text-3xl text-red-500 dark:text-red-400" data-icon="carbon:warning-alt"></i>
+                    </div>
+                    <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No pages found</h3>
+                    <p class="text-gray-500 dark:text-gray-400">This manga batch doesn't have any completed pages.</p>
+                </div>
+                
+                <!-- Manga Pages (Long Strip) -->
+                <div 
+                    x-show="!loadingPages && mangaPages.length > 0" 
+                    class="manga-longstrip"
+                    :style="`width: ${100 * zoomLevel}%; max-width: none; margin: 0 auto; transform-origin: top center;`"
+                >
+                    <template x-for="(page, index) in mangaPages" :key="page.task_id">
+                        <div class="manga-page w-full p-0 m-0 overflow-hidden">
+                            <img 
+                                :alt="`Page ${index + 1}`"
+                                class="w-full mx-auto block"
+                                loading="lazy"
+                                @error="handleImageError"
+                                @load="onImageLoaded($event, index)"
+                                x-init="queueImageLoad($el, getPageImageUrl(page), index)"
+                            />
+                            <div class="w-full h-64 bg-gray-200 dark:bg-gray-700 flex items-center justify-center animate-pulse"
+                                 x-show="!imageLoaded[index]">
+                                <i class="iconify text-4xl text-gray-400 dark:text-gray-500" data-icon="carbon:image"></i>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-gray-800 shadow-md py-4 mt-6 transition-colors">
+        <div class="container mx-auto px-4 text-center text-gray-600 dark:text-gray-400 text-sm">
+            <p>Manga Image Translator - Reader Interface</p>
+            <p class="mt-1">
+                <a href="https://github.com/shiestapoi/manga-image-translator" class="text-blue-600 dark:text-blue-400 hover:underline" target="_blank">
+                    GitHub Repository
+                </a>
+            </p>
+        </div>
+    </footer>
+    
+    <!-- Toast Messages -->
+    <div 
+        x-show="toast.show" 
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="opacity-0 transform translate-y-2"
+        x-transition:enter-end="opacity-100 transform translate-y-0"
+        x-transition:leave="transition ease-in duration-200"
+        x-transition:leave-start="opacity-100 transform translate-y-0"
+        x-transition:leave-end="opacity-0 transform translate-y-2"
+        class="fixed bottom-4 right-4 px-4 py-3 rounded-lg shadow-lg flex items-center max-w-md"
+        :class="{
+            'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200': toast.type === 'error',
+            'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200': toast.type === 'warning',
+            'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200': toast.type === 'success',
+            'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200': toast.type === 'info'
+        }"
+    >
+        <i class="iconify text-xl mr-2" :data-icon="getToastIcon()"></i>
+        <span x-text="toast.message"></span>
+        <button @click="dismissToast()" class="ml-4 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+            <i class="iconify" data-icon="carbon:close"></i>
+        </button>
+    </div>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            // Make sure Alpine.js is fully initialized before our component
+            console.log('Alpine.js initialized');
+        });
+        
+        function mangaReader() {
+            return {
+                // State
+                isDarkMode: localStorage.getItem('dark-mode') === 'true' || 
+                           (!localStorage.getItem('dark-mode') && window.matchMedia('(prefers-color-scheme: dark)').matches),
+                loadingBatches: true,
+                batches: [],
+                searchQuery: '',
+                statusFilter: '',
+                selectedBatch: null,
+                loadingPages: false,
+                mangaPages: [],
+                zoomLevel: parseFloat(localStorage.getItem('manga-zoom-level') || '1'),
+                toast: {
+                    show: false,
+                    message: '',
+                    type: 'info',
+                    timer: null
+                },
+                
+                // Lazy loading images
+                imageLoaded: {},
+                imageQueue: [],
+                currentlyLoading: false,
+                loadedCount: 0,
+                
+                queueImageLoad(el, src, index) {
+                    // Store element and source in queue
+                    this.imageQueue.push({ el, src, index });
+                    this.imageLoaded[index] = false;
+                    
+                    // If this is the first page, start loading immediately
+                    // Otherwise wait for the previous image to complete
+                    if (index === 0) {
+                        this.processNextImage();
+                    }
+                },
+                
+                processNextImage() {
+                    // If already loading or queue empty, exit
+                    if (this.currentlyLoading || this.imageQueue.length === 0) {
+                        return;
+                    }
+                    
+                    // Start loading the next image
+                    this.currentlyLoading = true;
+                    const nextImage = this.imageQueue.shift();
+                    
+                    // Create IntersectionObserver to detect when image is near viewport
+                    if ('IntersectionObserver' in window) {
+                        const observer = new IntersectionObserver((entries) => {
+                            entries.forEach(entry => {
+                                if (entry.isIntersecting) {
+                                    // Set the source to start loading
+                                    nextImage.el.src = nextImage.src;
+                                    observer.unobserve(nextImage.el);
+                                }
+                            });
+                        }, {
+                            rootMargin: '300px 0px' // Start loading when within 300px
+                        });
+                        
+                        observer.observe(nextImage.el);
+                    } else {
+                        // Fallback for browsers that don't support IntersectionObserver
+                        nextImage.el.src = nextImage.src;
+                    }
+                },
+                
+                onImageLoaded(event, index) {
+                    // Mark this image as loaded
+                    this.imageLoaded[index] = true;
+                    this.loadedCount++;
+                    this.currentlyLoading = false;
+                    
+                    // Load the next image (but only if we're within 3 of the current viewport)
+                    // This prevents loading too far ahead while still maintaining the sequential order
+                    if (index < 3 || this.isNearViewport(event.target)) {
+                        this.processNextImage();
+                    }
+                    
+                    // When 25%, 50%, 75% and 100% of images are loaded, show a toast notification
+                    const percentage = Math.floor((this.loadedCount / this.mangaPages.length) * 100);
+                    if (percentage === 25 || percentage === 50 || percentage === 75 || percentage === 100) {
+                        this.showToast(`${percentage}% of manga pages loaded`, 'info');
+                    }
+                    
+                    console.log(`Loaded image ${index + 1} of ${this.mangaPages.length}`);
+                },
+                
+                isNearViewport(element) {
+                    const rect = element.getBoundingClientRect();
+                    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+                    
+                    // Check if element is within 2x the viewport height
+                    return rect.bottom > -viewportHeight && rect.top < viewportHeight * 2;
+                },
+                
+                // Scroll event handler to load more images as user scrolls
+                handleScroll() {
+                    if (!this.currentlyLoading && this.imageQueue.length > 0) {
+                        this.processNextImage();
+                    }
+                },
+                
+                // Computed properties
+                get filteredBatches() {
+                    if (!this.batches || this.batches.length === 0) return [];
+                    
+                    return this.batches.filter(batch => {
+                        // Filter by status
+                        if (this.statusFilter && batch.status !== this.statusFilter) {
+                            return false;
+                        }
+                        
+                        // Filter by search query
+                        if (this.searchQuery && !batch.name.toLowerCase().includes(this.searchQuery.toLowerCase())) {
+                            return false;
+                        }
+                        
+                        return true;
+                    });
+                },
+                
+                // Initialization
+                async initialize() {
+                    console.log("Initializing manga reader app...");
+                    // Apply dark mode
+                    this.applyDarkMode();
+                    
+                    // Fetch batches
+                    await this.fetchBatches();
+                    
+                    // Check URL for batch parameter
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const batchId = urlParams.get('batch');
+                    
+                    if (batchId) {
+                        console.log(`Batch ID found in URL: ${batchId}`);
+                        // Find batch with matching ID
+                        const matchingBatch = this.batches.find(b => b.batch_id === batchId);
+                        if (matchingBatch && matchingBatch.status === 'completed') {
+                            console.log(`Automatically selecting batch: ${matchingBatch.name}`);
+                            this.selectBatch(matchingBatch);
+                        } else if (matchingBatch) {
+                            this.showToast(`Batch "${matchingBatch.name}" is not completed yet.`, 'warning');
+                        }
+                    }
+                    
+                    // Setup keyboard shortcuts
+                    this.setupKeyboardShortcuts();
+                    
+                    // Setup image loading on scroll
+                    document.getElementById('readerContainer')?.addEventListener('scroll', () => {
+                        this.handleScroll();
+                    });
+                },
+                
+                // Dark mode methods
+                applyDarkMode() {
+                    if (this.isDarkMode) {
+                        document.documentElement.classList.add('dark');
+                    } else {
+                        document.documentElement.classList.remove('dark');
+                    }
+                },
+                
+                toggleDarkMode() {
+                    this.isDarkMode = !this.isDarkMode;
+                    
+                    // Save preference to localStorage
+                    localStorage.setItem('dark-mode', this.isDarkMode);
+                    
+                    // Apply the change
+                    this.applyDarkMode();
+                },
+                
+                // API methods
+                async fetchBatches() {
+                    this.loadingBatches = true;
+                    try {
+                        console.log("Fetching batches...");
+                        const response = await fetch('/batch');
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch batches');
+                        }
+                        
+                        this.batches = await response.json();
+                        console.log(`Fetched ${this.batches.length} batches`);
+                        
+                        // Sort by creation date (newest first)
+                        this.batches.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                    } catch (error) {
+                        console.error('Error fetching batches:', error);
+                        this.showToast('Failed to load manga batches. Please try again.', 'error');
+                    } finally {
+                        this.loadingBatches = false;
+                    }
+                },
+                
+                async fetchMangaPages(batchId) {
+                    if (!batchId) {
+                        console.error('No batch ID provided for fetching pages');
+                        return;
+                    }
+                    
+                    this.loadingPages = true;
+                    this.mangaPages = []; // Clear existing pages first
+                    
+                    try {
+                        console.log(`Fetching pages for batch: ${batchId}`);
+                        // First fetch the tasks for this batch
+                        const tasksResponse = await fetch(`/batch/${batchId}/tasks`);
+                        if (!tasksResponse.ok) {
+                            throw new Error('Failed to fetch manga pages');
+                        }
+                        
+                        let tasks = await tasksResponse.json();
+                        console.log(`Fetched ${tasks.length} tasks`);
+                        
+                        // Filter only completed tasks
+                        tasks = tasks.filter(task => task.status === 'completed');
+                        console.log(`${tasks.length} completed tasks found`);
+                        
+                        // Sort tasks by original filename or creation time
+                        tasks.sort((a, b) => {
+                            // First try to sort by filename (if it contains numbers)
+                            const aName = a.filename || '';
+                            const bName = b.filename || '';
+                            
+                            // Extract numbers from filenames for natural sorting
+                            const aMatch = aName.match(/\d+/);
+                            const bMatch = bName.match(/\d+/);
+                            
+                            if (aMatch && bMatch) {
+                                return parseInt(aMatch[0]) - parseInt(bMatch[0]);
+                            }
+                            
+                            // Fall back to creation time if naming doesn't provide order
+                            return new Date(a.created_at) - new Date(b.created_at);
+                        });
+                        
+                        this.mangaPages = tasks;
+                    } catch (error) {
+                        console.error('Error fetching manga pages:', error);
+                        this.showToast('Failed to load manga pages. Please try again.', 'error');
+                    } finally {
+                        this.loadingPages = false;
+                    }
+                },
+                
+                // UI interaction methods
+                selectBatch(batch) {
+                    console.log(`Selecting batch: ${batch.name}`);
+                    if (!batch) {
+                        console.error('Attempted to select a null batch');
+                        return;
+                    }
+                    this.selectedBatch = batch;
+                    this.fetchMangaPages(batch.batch_id);
+                    
+                    // Apply saved zoom level if exists
+                    const savedZoom = localStorage.getItem('manga-zoom-level');
+                    if (savedZoom) {
+                        this.zoomLevel = parseFloat(savedZoom);
+                        console.log(`Applied saved zoom level: ${this.zoomLevel}`);
+                    }
+                    
+                    // Scroll to top of page
+                    window.scrollTo(0, 0);
+                },
+                
+                returnToBatchSelection() {
+                    this.selectedBatch = null;
+                    this.mangaPages = [];
+                },
+                
+                showIncompleteMessage(batch) {
+                    let message = '';
+                    if (batch.status === 'queued') {
+                        message = 'This manga is still in the queue and has not been processed yet.';
+                    } else if (batch.status === 'processing' || batch.status === 'in_progress') {
+                        message = `Processing in progress: ${batch.completed_tasks} of ${batch.total_tasks} images completed.`;
+                    } else {
+                        message = 'This manga batch is not ready to read yet.';
+                    }
+                    
+                    this.showToast(message, 'warning');
+                },
+                
+                // Image handling
+                getPageImageUrl(page) {
+                    // If result_path is a full URL, use it as is
+                    if (page.result_path && page.result_path.startsWith('http')) {
+                        return page.result_path;
+                    }
+                    
+                    // Otherwise, construct the URL based on the main.py implementation
+                    return `/static/results/${page.result_path}`;
+                },
+                
+                handleImageError(event) {
+                    // Replace with error placeholder
+                    event.target.src = 'data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' viewBox=\'0 0 100 100\'%3e%3cpath fill=\'%23ccc\' d=\'M50 15c-19.33 0-35 15.67-35 35s15.67 35 35 35 35-15.67 35-35-15.67-35-35-35zm0 5c16.57 0 30 13.43 30 30s-13.43 30-30 30-30-13.43-30-30 13.43-30 30-30zm-1 10v25h2V30h-2zm0 30v5h2v-5h-2z\'/%3e%3c/svg%3e';
+                    event.target.alt = 'Image failed to load';
+                    event.target.classList.add('p-4');
+                },
+                
+                // Reader controls
+                increaseZoom() {
+                    if (this.zoomLevel < 2) {
+                        this.zoomLevel = Math.min(2, this.zoomLevel + 0.1);
+                        this.saveZoomLevel();
+                    }
+                },
+                
+                decreaseZoom() {
+                    if (this.zoomLevel > 0.3) {
+                        this.zoomLevel = Math.max(0.3, this.zoomLevel - 0.1);
+                        this.saveZoomLevel();
+                    }
+                },
+                
+                saveZoomLevel() {
+                    // Round to 1 decimal place to avoid floating point issues
+                    const roundedZoom = Math.round(this.zoomLevel * 10) / 10;
+                    this.zoomLevel = roundedZoom;
+                    
+                    // Save the current zoom level to localStorage
+                    localStorage.setItem('manga-zoom-level', this.zoomLevel.toString());
+                    console.log(`Saved zoom level: ${this.zoomLevel}`);
+                },
+                
+                scrollToTop() {
+                    const container = document.getElementById('readerContainer');
+                    if (container) {
+                        container.scrollTop = 0;
+                    }
+                },
+                
+                scrollToBottom() {
+                    const container = document.getElementById('readerContainer');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                },
+                
+                setupKeyboardShortcuts() {
+                    document.addEventListener('keydown', (e) => {
+                        // Only handle shortcuts when the reader is active
+                        if (!this.selectedBatch) return;
+                        
+                        switch (e.key) {
+                            case '+':
+                                this.increaseZoom();
+                                break;
+                            case '-':
+                                this.decreaseZoom();
+                                break;
+                            case 'Home':
+                                this.scrollToTop();
+                                break;
+                            case 'End':
+                                this.scrollToBottom();
+                                break;
+                            case 'Escape':
+                                this.returnToBatchSelection();
+                                break;
+                        }
+                    });
+                },
+                
+                // Notifications
+                showToast(message, type = 'info') {
+                    // Clear any existing toast timer
+                    if (this.toast.timer) {
+                        clearTimeout(this.toast.timer);
+                    }
+                    
+                    // Set new toast
+                    this.toast.show = true;
+                    this.toast.message = message;
+                    this.toast.type = type;
+                    
+                    // Auto-dismiss after 5 seconds
+                    this.toast.timer = setTimeout(() => {
+                        this.dismissToast();
+                    }, 5000);
+                },
+                
+                dismissToast() {
+                    this.toast.show = false;
+                },
+                
+                getToastIcon() {
+                    switch (this.toast.type) {
+                        case 'error':
+                            return 'carbon:error';
+                        case 'warning':
+                            return 'carbon:warning';
+                        case 'success':
+                            return 'carbon:checkmark';
+                        default:
+                            return 'carbon:information';
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>

@@ -36,6 +36,20 @@ class ExecutorInstance(BaseModel):
             sock.settimeout(2)
             result = sock.connect_ex((self.ip, self.port))
             sock.close()
+            
+            # If connecting to a non-localhost address fails, try with localhost
+            if result != 0 and self.ip != "127.0.0.1" and self.ip != "localhost":
+                # This helps with the case where external IP is used but internal access is needed
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex(("127.0.0.1", self.port))
+                sock.close()
+                if result == 0:
+                    # If localhost connection works, update the IP for future connections
+                    logger.info(f"Updating instance IP from {self.ip} to 127.0.0.1 for local access")
+                    self.ip = "127.0.0.1"
+                    return True
+            
             return result == 0
         except Exception as e:
             logger.warning(f"Health check failed for {self.ip}:{self.port} - {str(e)}")

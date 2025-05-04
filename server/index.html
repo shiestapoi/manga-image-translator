@@ -1,582 +1,356 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Image/Manga Translator</title>
-    <!-- Tailwind Reset (UnoCSS Reset) -->
-    <!-- <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@unocss/reset/tailwind.min.css"
-    /> -->
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50:  '#eef2ff',
+                100: '#e0e7ff',
+                200: '#c7d2fe',
+                300: '#a5b4fc',
+                400: '#818cf8',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81',
+                950: '#1e1b4b',
+              },
+            },
+          },
+        },
+      }
+    </script>
+    
     <!-- Petite Vue -->
     <script src="https://cdn.jsdelivr.net/npm/petite-vue@0.4.1/dist/petite-vue.iife.js"></script>
-    <!-- UnoCSS Runtime -->
-    <script src="https://cdn.jsdelivr.net/npm/@unocss/runtime@0.30.5/uno.global.js"></script>
+    
     <!-- Iconify -->
     <script src="https://cdn.jsdelivr.net/npm/@iconify/iconify@2.2.0/dist/iconify.min.js"></script>
-
-    <style>
-      [v-cloak],
-      [un-cloak] {
-        display: none;
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/styles.css">
+    
+    <!-- Preload dark mode to prevent flash -->
+    <script>
+      // Check for saved preference or system preference
+      const savedMode = localStorage.getItem('dark-mode');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      
+      // Set initial mode - saved preference takes priority
+      if (savedMode === 'true' || (savedMode === null && prefersDark)) {
+        document.documentElement.classList.add('dark');
       }
-
-      .nav-bar {
-        background-color: #2c3e50;
-        padding: 0.5rem 0;
-        margin-bottom: 1rem;
-        display: flex;
-        justify-content: center;
-        flex-wrap: wrap;
-      }
-
-      .nav-link {
-        color: white;
-        text-decoration: none;
-        padding: 0.5rem 1rem;
-        margin: 0 0.25rem;
-        border-radius: 4px;
-      }
-
-      .nav-link:hover {
-        background-color: #34495e;
-      }
-
-      .nav-link.active {
-        background-color: #3498db;
-      }
-
-      .connection-info {
-        background-color: #f0f8ff;
-        padding: 0.5rem;
-        text-align: center;
-        font-size: 0.75rem;
-        color: #555;
-        margin-top: 1rem;
-        border-radius: 4px;
-      }
-
-      .error-message {
-        background-color: #ffeeee;
-        border-left: 3px solid #e74c3c;
-        padding: 0.75rem;
-        margin-bottom: 1rem;
-        border-radius: 4px;
-      }
-
-      .batch-button {
-        margin-top: 1rem;
-        background-color: #2ecc71;
-        color: #ffffff;
-        border: none;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
-        display: inline-block;
-        cursor: pointer;
-        text-decoration: none;
-        transition: background-color 0.3s;
-      }
-
-      .batch-button:hover {
-        background-color: #27ae60;
-      }
-
-      .tab-button {
-        padding: 0.5rem 1rem;
-        margin-right: 0.25rem;
-        cursor: pointer;
-        border-radius: 4px 4px 0 0;
-        border: 1px solid #ddd;
-        border-bottom: none;
-        background-color: #f5f5f5;
-      }
-
-      .tab-button.active {
-        background-color: white;
-        border-bottom: 1px solid white;
-        margin-bottom: -1px;
-        font-weight: bold;
-      }
-
-      .tab-content {
-        border: 1px solid #ddd;
-        padding: 1rem;
-        border-radius: 0 4px 4px 4px;
-        background-color: white;
-      }
-
-      .multi-file-item {
-        display: flex;
-        align-items: center;
-        padding: 0.5rem;
-        border: 1px solid #eee;
-        margin-bottom: 0.5rem;
-        border-radius: 4px;
-      }
-
-      .multi-file-item img {
-        width: 60px;
-        height: 60px;
-        object-fit: cover;
-        margin-right: 0.5rem;
-        border-radius: 4px;
-      }
-
-      .multi-file-item .file-info {
-        flex-grow: 1;
-      }
-
-      .multi-file-item .file-actions {
-        display: flex;
-        gap: 0.5rem;
-      }
-
-      .multi-file-list {
-        max-height: 300px;
-        overflow-y: auto;
-        margin-bottom: 1rem;
-      }
-
-      .history-item {
-        display: flex;
-        align-items: center;
-        padding: 0.75rem;
-        border: 1px solid #eee;
-        margin-bottom: 0.5rem;
-        border-radius: 4px;
-      }
-
-      .history-item img {
-        width: 80px;
-        height: 80px;
-        object-fit: cover;
-        margin-right: 0.75rem;
-        border-radius: 4px;
-      }
-
-      .history-item .history-info {
-        flex-grow: 1;
-      }
-
-      .status-pill {
-        display: inline-block;
-        padding: 0.25rem 0.5rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: bold;
-        color: #ffffff;
-      }
-
-      .status-completed {
-        background-color: #2ecc71;
-      }
-
-      .status-processing {
-        background-color: #f39c12;
-      }
-
-      .status-queued {
-        background-color: #3498db;
-      }
-
-      .status-failed {
-        background-color: #e74c3c;
-      }
-
-      .tooltip {
-        position: relative;
-        display: inline-block;
-        border-bottom: 1px dotted #555;
-        cursor: help;
-      }
-
-      .tooltip .tooltip-text {
-        visibility: hidden;
-        width: 300px;
-        background-color: #555;
-        color: #fff;
-        text-align: left;
-        border-radius: 6px;
-        padding: 10px;
-        position: absolute;
-        z-index: 1;
-        bottom: 125%;
-        left: 50%;
-        transform: translateX(-50%);
-        opacity: 0;
-        transition: opacity 0.3s;
-      }
-
-      .tooltip:hover .tooltip-text {
-        visibility: visible;
-        opacity: 1;
-      }
-
-      .tooltip .tooltip-text::after {
-        content: "";
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        margin-left: -5px;
-        border-width: 5px;
-        border-style: solid;
-        border-color: #555 transparent transparent transparent;
-      }
-
-      .code-block {
-        background-color: #2c3e50;
-        color: white;
-        padding: 5px 8px;
-        border-radius: 3px;
-        font-family: monospace;
-      }
-    </style>
+    </script>
   </head>
-  <body class="bg-gray-100">
-    <form
-      action="#"
-      class="flex flex-col min-h-screen items-center justify-center py-8 px-4"
-      @submit.prevent="onsubmit"
-      @vue:mounted="onmounted"
-      v-scope
-      v-cloak
-      un-cloak
-    >
-      <!-- カード風のコンテナ -->
-      <div class="bg-white shadow-md rounded-lg p-6 w-full max-w-4xl space-y-6">
-        <h1 class="text-center text-2xl font-bold text-gray-800">
-          Image/Manga Translator
-        </h1>
-
-        <!-- Tab navigation -->
-        <div class="flex border-b">
+  
+  <body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen" v-scope="createTranslationApp()" v-cloak>
+    <header class="header">
+      <div class="container mx-auto px-4 py-3 flex flex-wrap justify-between items-center header-content">
+        <div class="flex items-center space-x-4 app-logo">
+          <h1 class="text-2xl font-bold bg-gradient-to-r from-primary-600 to-primary-400 dark:from-primary-400 dark:to-primary-300 bg-clip-text text-transparent">
+            <i class="iconify inline-block mr-2 text-primary-500" data-icon="carbon:image-search"></i>
+            Manga Translator
+          </h1>
+        </div>
+        
+        <div class="flex items-center mt-2 md:mt-0 gap-3 header-actions">
+          <!-- Dark mode toggle -->
+          <div class="flex items-center mr-4">
+            <label class="toggle-switch">
+              <input type="checkbox" :checked="isDarkMode" @change="toggleDarkMode">
+              <span class="toggle-slider">
+                <i class="iconify icon-day" data-icon="carbon:sun"></i>
+                <i class="iconify icon-night" data-icon="carbon:moon"></i>
+              </span>
+            </label>
+            <span class="text-sm font-medium">
+              {{ isDarkMode ? 'Dark' : 'Light' }} Mode
+            </span>
+          </div>
+          
+          <!-- Server controls -->
+          <button 
+            class="btn btn-primary text-sm px-3 py-1.5 rounded-md flex items-center gap-1 hover:shadow-lg"
+            @click="startTranslator"
+          >
+            <i class="iconify" data-icon="carbon:launch"></i>
+            <span>Start Translator</span>
+          </button>
+        </div>
+      </div>
+      
+      <!-- Navigation Tabs -->
+      <div class="container mx-auto px-4 mt-3">
+        <div class="flex overflow-x-auto pb-2 nav-tabs-container">
           <button
-            class="tab-button"
+            class="tab-button whitespace-nowrap flex items-center gap-1.5"
             :class="{'active': activeTab === 'single'}"
             @click="switchTab('single')"
             type="button"
           >
-            Single Image
+            <i class="iconify" data-icon="carbon:image"></i>
+            <span>Single Image</span>
           </button>
           <button
-            class="tab-button"
+            class="tab-button whitespace-nowrap flex items-center gap-1.5"
             :class="{'active': activeTab === 'multi'}"
             @click="switchTab('multi')"
             type="button"
           >
-            Multiple Images
+            <i class="iconify" data-icon="carbon:image-service"></i>
+            <span>Multiple Images</span>
           </button>
           <button
-            class="tab-button"
+            class="tab-button whitespace-nowrap flex items-center gap-1.5"
             :class="{'active': activeTab === 'queue'}"
             @click="switchTab('queue')"
             type="button"
           >
-            Queue Status
+            <i class="iconify" data-icon="carbon:data-vis-1"></i>
+            <span>Queue Status</span>
           </button>
           <button
-            class="tab-button"
+            class="tab-button whitespace-nowrap flex items-center gap-1.5"
             :class="{'active': activeTab === 'history'}"
             @click="switchTab('history')"
             type="button"
           >
-            History
+            <i class="iconify" data-icon="carbon:document"></i>
+            <span>History</span>
           </button>
-        </div>
-
-        <!-- Server Controls -->
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-xl font-bold">Server Controls</h2>
           <button
+            class="tab-button whitespace-nowrap flex items-center gap-1.5"
+            :class="{'active': activeTab === 'mangadex'}"
+            @click="switchTab('mangadex')"
             type="button"
-            class="px-3 py-2 text-blue-800 bg-blue-100 hover:bg-blue-200 rounded-md"
-            @click="startTranslator"
           >
-            Start Translator
+            <i class="iconify" data-icon="carbon:book"></i>
+            <span>MangaDex</span>
           </button>
         </div>
-
-        <!-- Single Image Tab Content -->
-        <div v-if="activeTab === 'single'">
-          <!-- 上部の設定オプション（1段目） -->
-          <div class="flex flex-wrap items-end gap-4">
-            <!-- Detection Resolution -->
-            <div class="flex items-center gap-1" title="Detection resolution">
-              <i
-                class="iconify text-gray-600"
-                data-icon="carbon:fit-to-screen"
-              ></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500"
-                  v-model="detectionResolution"
-                >
-                  <option value="1024">1024px</option>
-                  <option value="1536">1536px</option>
-                  <option value="2048">2048px</option>
-                  <option value="2560">2560px</option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+      </div>
+    </header>
+    
+    <main class="container mx-auto px-4 py-6">
+      
+      <!-- Single Image Tab Content -->
+      <div v-if="activeTab === 'single'" class="fade-in">
+        <div class="card">
+          <h2 class="text-xl font-bold mb-4">Image Translation Settings</h2>
+          
+          <!-- Settings Grid - First Row -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:fit-to-screen"></i>
+                Detection Resolution
+              </label>
+              <select v-model="detectionResolution" class="mt-1">
+                <option value="1024">1024px</option>
+                <option value="1536">1536px</option>
+                <option value="2048">2048px</option>
+                <option value="2560">2560px</option>
+              </select>
             </div>
-
-            <!-- Text Detector -->
-            <div class="flex items-center gap-1" title="Text detector">
-              <i
-                class="iconify text-gray-600"
-                data-icon="carbon:search-locate"
-              ></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500"
-                  v-model="textDetector"
-                >
-                  <option value="default">Default</option>
-                  <option value="ctd">CTD</option>
-                  <option value="paddle">Paddle</option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:search-locate"></i>
+                Text Detector
+              </label>
+              <select v-model="textDetector" class="mt-1">
+                <option value="default">Default</option>
+                <option value="ctd">CTD</option>
+                <option value="paddle">Paddle</option>
+              </select>
             </div>
-
-            <!-- Render text direction -->
-            <div
-              class="flex items-center gap-1"
-              title="Render text orientation"
-            >
-              <i
-                class="iconify text-gray-600"
-                data-icon="carbon:text-align-left"
-              ></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500"
-                  v-model="renderTextDirection"
-                >
-                  <option value="auto">Auto</option>
-                  <option value="horizontal">Horizontal</option>
-                  <option value="vertical">Vertical</option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:text-align-left"></i>
+                Text Direction
+              </label>
+              <select v-model="renderTextDirection" class="mt-1">
+                <option value="auto">Auto</option>
+                <option value="horizontal">Horizontal</option>
+                <option value="vertical">Vertical</option>
+              </select>
             </div>
-
-            <!-- Translator -->
-            <div class="flex items-center gap-1" title="Translator">
-              <i
-                class="iconify text-gray-600"
-                data-icon="carbon:operations-record"
-              ></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500"
-                  v-model="translator"
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:operations-record"></i>
+                Translator
+              </label>
+              <select v-model="translator" class="mt-1">
+                <option
+                  v-for="key in validTranslators"
+                  :value="key"
+                  :key="key"
                 >
-                  <option
-                    v-for="key in validTranslators"
-                    :value="key"
-                    :key="key"
-                  >
-                    {{getTranslatorName(key)}}
-                  </option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+                  {{getTranslatorName(key)}}
+                </option>
+              </select>
             </div>
-
-            <!-- Target Language -->
-            <div class="flex items-center gap-1" title="Target language">
-              <i class="iconify text-gray-600" data-icon="carbon:language"></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500"
-                  v-model="targetLanguage"
-                >
-                  <option value="IND">Indonesia</option>
-                  <option value="CHS">简体中文</option>
-                  <option value="CHT">繁體中文</option>
-                  <option value="JPN">日本語</option>
-                  <option value="ENG">English</option>
-                  <option value="KOR">한국어</option>
-                  <option value="VIN">Tiếng Việt</option>
-                  <option value="CSY">čeština</option>
-                  <option value="NLD">Nederlands</option>
-                  <option value="FRA">français</option>
-                  <option value="DEU">Deutsch</option>
-                  <option value="HUN">magyar nyelv</option>
-                  <option value="ITA">italiano</option>
-                  <option value="PLK">polski</option>
-                  <option value="PTB">português</option>
-                  <option value="ROM">limba română</option>
-                  <option value="RUS">русский язык</option>
-                  <option value="ESP">español</option>
-                  <option value="TRK">Türk dili</option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:language"></i>
+                Target Language
+              </label>
+              <select v-model="targetLanguage" class="mt-1">
+                <option value="IND">Indonesia</option>
+                <option value="CHS">简体中文</option>
+                <option value="CHT">繁體中文</option>
+                <option value="JPN">日本語</option>
+                <option value="ENG">English</option>
+                <option value="KOR">한국어</option>
+                <option value="VIN">Tiếng Việt</option>
+                <option value="CSY">čeština</option>
+                <option value="NLD">Nederlands</option>
+                <option value="FRA">français</option>
+                <option value="DEU">Deutsch</option>
+                <option value="HUN">magyar nyelv</option>
+                <option value="ITA">italiano</option>
+                <option value="PLK">polski</option>
+                <option value="PTB">português</option>
+                <option value="ROM">limba română</option>
+                <option value="RUS">русский язык</option>
+                <option value="ESP">español</option>
+                <option value="TRK">Türk dili</option>
+              </select>
+            </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:paint-brush"></i>
+                Inpainter
+              </label>
+              <select v-model="inpainter" class="mt-1">
+                <option value="default">Default</option>
+                <option value="lama_large">Lama Large</option>
+                <option value="lama_mpe">Lama MPE</option>
+                <option value="sd">SD</option>
+                <option value="none">None</option>
+                <option value="original">Original</option>
+              </select>
             </div>
           </div>
-
-          <!-- オプション（2段目） -->
-          <div class="flex flex-wrap items-end gap-4 mt-4">
-            <!-- Inpainting Size -->
-            <div class="flex items-center gap-1" title="Inpainting Size">
-              <i
-                class="iconify text-gray-600"
-                data-icon="carbon:paint-brush"
-              ></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500"
-                  v-model="inpaintingSize"
-                >
-                  <option value="516">516px</option>
-                  <option value="1024">1024px</option>
-                  <option value="2048">2048px</option>
-                  <option value="2560">2560px</option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+          
+          <!-- Settings Grid - Second Row -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="carbon:paint-brush"></i>
+                Inpainting Size
+              </label>
+              <select v-model="inpaintingSize" class="mt-1">
+                <option value="516">516px</option>
+                <option value="1024">1024px</option>
+                <option value="2048">2048px</option>
+                <option value="2560">2560px</option>
+              </select>
             </div>
-
-            <!-- Unclip Ratio -->
-            <div class="flex items-center gap-1" title="Unclip Ratio">
-              <i
-                class="iconify text-gray-600"
-                data-icon="weui:max-window-filled"
-              ></i>
-              <div class="relative">
-                <input
-                  type="number"
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-2 pr-2 py-1 outline-none focus:border-blue-500 w-20"
-                  v-model="customUnclipRatio"
-                  placeholder="2.3 (Default)"
-                  step="0.01"
-                />
-              </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="weui:max-window-filled"></i>
+                Unclip Ratio
+              </label>
+              <input
+                type="number"
+                v-model="customUnclipRatio"
+                placeholder="2.3 (Default)"
+                step="0.01"
+                class="mt-1"
+              />
             </div>
-
-            <!-- Box Threshold -->
-            <div class="flex items-center gap-1" title="Box Threshold">
-              <i
-                class="iconify text-gray-600"
-                data-icon="weui:photo-wall-outlined"
-              ></i>
-              <div class="relative">
-                <input
-                  type="number"
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-2 pr-2 py-1 outline-none focus:border-blue-500 w-20"
-                  v-model="customBoxThreshold"
-                  placeholder="0.7 (Default)"
-                  step="0.01"
-                />
-              </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="weui:photo-wall-outlined"></i>
+                Box Threshold
+              </label>
+              <input
+                type="number"
+                v-model="customBoxThreshold"
+                placeholder="0.7 (Default)"
+                step="0.01"
+                class="mt-1"
+              />
             </div>
-
-            <!-- Mask Dilation Offset -->
-            <div class="flex items-center gap-1" title="Mask Dilation Offset">
-              <i
-                class="iconify text-gray-600"
-                data-icon="material-symbols:adjust-outline"
-              ></i>
-              <div class="relative">
-                <input
-                  type="number"
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-2 pr-2 py-1 outline-none focus:border-blue-500 w-20"
-                  v-model="maskDilationOffset"
-                  placeholder="30 (Default)"
-                  step="1"
-                />
-              </div>
-            </div>
-
-            <!-- Inpainter -->
-            <div class="flex items-center gap-1" title="Inpainter">
-              <i
-                class="iconify text-gray-600"
-                data-icon="carbon:paint-brush"
-              ></i>
-              <div class="relative">
-                <select
-                  class="appearance-none bg-transparent border-b border-gray-300 pl-4 pr-7 py-1 outline-none focus:border-blue-500 w-28"
-                  v-model="inpainter"
-                >
-                  <option value="default">Default</option>
-                  <option value="lama_large">Lama Large</option>
-                  <option value="lama_mpe">Lama MPE</option>
-                  <option value="sd">SD</option>
-                  <option value="none">None</option>
-                  <option value="original">Original</option>
-                </select>
-                <i
-                  class="iconify absolute top-1 right-1 text-gray-500 pointer-events-none"
-                  data-icon="carbon:chevron-down"
-                ></i>
-              </div>
+            
+            <div class="form-control">
+              <label class="flex items-center gap-2">
+                <i class="iconify text-primary-600 dark:text-primary-400" data-icon="material-symbols:adjust-outline"></i>
+                Mask Dilation
+              </label>
+              <input
+                type="number"
+                v-model="maskDilationOffset"
+                placeholder="30 (Default)"
+                step="1"
+                class="mt-1"
+              />
             </div>
           </div>
-
-          <!-- メインコンテンツエリア -->
-          <div class="mt-4">
-            <!-- 結果表示 -->
+          
+          <!-- Image Processing Area -->
+          <div class="mt-6">
+            <!-- Result display -->
             <div v-if="result" class="flex flex-col items-center space-y-4">
               <img
-                class="max-w-full max-h-[50vh] rounded-md"
+                class="max-w-full max-h-[50vh] rounded-md shadow-lg"
                 :src="resultUri"
+                alt="Translated Image"
               />
               <div class="flex gap-3">
                 <button
-                  class="px-3 py-2 text-center rounded-md text-blue-800 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  class="btn btn-secondary"
                   @click="clear"
                 >
+                  <i class="iconify mr-1" data-icon="carbon:add"></i>
                   Upload another
                 </button>
                 <button
-                  class="px-3 py-2 text-center rounded-md text-green-800 bg-green-100 hover:bg-green-200 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  class="btn btn-success"
                   @click="downloadImage"
                 >
+                  <i class="iconify mr-1" data-icon="carbon:download"></i>
                   Download result
                 </button>
               </div>
             </div>
 
-            <!-- 処理中ステータス表示 -->
+            <!-- Processing status -->
             <div
               v-else-if="status"
-              class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-md p-8 h-72"
+              class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-md p-8 h-72"
             >
               <div
                 v-if="error"
                 class="flex flex-col items-center gap-4 text-center"
               >
-                <div class="error-message w-full">
-                  <div class="font-semibold text-red-600">Error</div>
+                <div class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-4 rounded-md w-full">
+                  <div class="font-semibold">Error</div>
                   <div>{{ statusText }}</div>
                   <div v-if="errorDetails" class="text-sm mt-2">
                     {{ errorDetails }}
                   </div>
                 </div>
                 <button
-                  class="px-3 py-2 text-center rounded-md text-blue-800 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  class="btn btn-primary"
                   @click="clear"
                 >
                   Try again
@@ -584,110 +358,114 @@
               </div>
               <div
                 v-else
-                class="flex flex-col items-center gap-2 text-center text-gray-700"
+                class="flex flex-col items-center gap-4 text-center"
               >
                 <i
-                  class="iconify w-8 h-8 text-gray-500 animate-spin"
+                  class="iconify w-12 h-12 text-primary-500 spinner"
                   data-icon="carbon:progress-bar-round"
                 ></i>
-                <div>{{ statusText }}</div>
+                <div class="text-lg">{{ statusText }}</div>
                 <div
                   v-if="progressPercent !== null"
-                  class="w-full max-w-xs bg-gray-200 rounded-full h-2.5 mt-2"
+                  class="w-full max-w-md"
                 >
-                  <div
-                    class="bg-blue-600 h-2.5 rounded-full"
-                    :style="`width: ${progressPercent}%`"
-                  ></div>
+                  <div class="progress-bar">
+                    <div 
+                      class="progress-bar-fill" 
+                      :style="`width: ${progressPercent}%`"
+                    ></div>
+                  </div>
+                  <div class="text-xs text-right mt-1 text-gray-500 dark:text-gray-400">
+                    {{ progressPercent }}%
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- 画像未アップロード時のアップロードボックス -->
+            <!-- Upload area -->
             <label
               v-else
-              class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-md p-8 h-72 cursor-pointer hover:border-blue-400 transition-colors py-57"
+              class="upload-area flex flex-col items-center justify-center h-72"
               for="file"
               @dragenter.prevent
               @dragover.prevent
               @dragleave.prevent
-              @drop.prevent="ondrop"
+              @drop.prevent="onDrop"
             >
-              <!-- 選択済みファイルがある場合 -->
+              <!-- Preview when file is selected -->
               <div
                 v-if="file"
                 class="flex flex-col items-center gap-4 text-center"
               >
-                <div class="text-gray-700">
-                  <span
-                    class="iconify-inline inline-block mr-2 text-xl"
-                    data-icon="carbon:image-search"
-                  ></span>
+                <div class="text-primary-600 dark:text-primary-400">
+                  <i class="iconify inline-block mr-2 text-xl" data-icon="carbon:image-search"></i>
                   File Preview
                 </div>
                 <img
-                  class="max-w-[18rem] max-h-[18rem] rounded-md border border-gray-200"
+                  class="max-w-xs max-h-32 rounded-md border border-gray-200 dark:border-gray-700"
                   :src="fileUri"
+                  alt="Preview"
                 />
                 <button
-                  type="submit"
-                  class="px-4 py-2 rounded-md bg-teal-600 text-white focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  type="button"
+                  class="btn btn-primary"
+                  @click="submitTranslation"
                 >
+                  <i class="iconify mr-2" data-icon="carbon:translate"></i>
                   Translate
                 </button>
-                <div class="text-sm text-gray-500">
+                <div class="text-sm text-gray-500 dark:text-gray-400">
                   Click the empty space or paste/drag a new one to replace
                 </div>
               </div>
-              <!-- まだファイルがない場合 -->
-              <div v-else class="flex flex-col items-center gap-2 text-center">
+              
+              <!-- Empty state -->
+              <div v-else class="flex flex-col items-center gap-4 text-center">
                 <i
-                  class="iconify w-8 h-8 text-gray-500"
+                  class="iconify w-12 h-12 text-primary-400 dark:text-primary-500"
                   data-icon="carbon:cloud-upload"
                 ></i>
-                <div class="text-gray-600">
-                  Paste an image, click to select one, or drag and drop here
+                <div class="text-gray-600 dark:text-gray-300 max-w-md">
+                  <p class="mb-2 text-lg">Drop your image here</p>
+                  <p class="text-sm">or click to select one, or paste from clipboard</p>
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400 mt-4">
+                  Supports PNG, JPEG, BMP and WebP formats
                 </div>
               </div>
+              
               <input
                 id="file"
                 type="file"
                 accept="image/png,image/jpeg,image/bmp,image/webp"
                 class="hidden"
-                @change="onfilechange"
+                @change="onFileChange"
               />
             </label>
           </div>
         </div>
-
-        <!-- Multiple Images Tab Content -->
-        <div v-if="activeTab === 'multi'" class="tab-content">
-          <div class="mb-4">
-            <h2 class="text-xl font-bold mb-2">Batch Translation Settings</h2>
-
-            <!-- Batch name -->
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-700 mb-1"
-                >Batch Name</label
-              >
+      </div>
+      
+      <!-- Multiple Images Tab Content -->
+      <div v-if="activeTab === 'multi'" class="fade-in">
+        <div class="card">
+          <h2 class="text-xl font-bold mb-4">Batch Translation</h2>
+          
+          <div class="mb-6">
+            <div class="form-control">
+              <label>Batch Name</label>
               <input
                 type="text"
                 v-model="batchName"
                 placeholder="My Manga Chapter"
-                class="w-full p-2 border border-gray-300 rounded-md"
+                class="mt-1"
               />
             </div>
 
-            <!-- Common settings -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1"
-                  >Translator</label
-                >
-                <select
-                  v-model="translator"
-                  class="w-full p-2 border border-gray-300 rounded-md"
-                >
+              <div class="form-control">
+                <label>Translator</label>
+                <select v-model="translator" class="mt-1">
                   <option
                     v-for="key in validTranslators"
                     :value="key"
@@ -697,14 +475,9 @@
                   </option>
                 </select>
               </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1"
-                  >Target Language</label
-                >
-                <select
-                  v-model="targetLanguage"
-                  class="w-full p-2 border border-gray-300 rounded-md"
-                >
+              <div class="form-control">
+                <label>Target Language</label>
+                <select v-model="targetLanguage" class="mt-1">
                   <option value="IND">Indonesia</option>
                   <option value="CHS">简体中文</option>
                   <option value="CHT">繁體中文</option>
@@ -730,7 +503,7 @@
 
             <!-- Upload area -->
             <div
-              class="border-2 border-dashed border-gray-300 rounded-md p-4 text-center cursor-pointer hover:border-blue-400 transition-colors"
+              class="upload-area text-center cursor-pointer"
               @click="triggerMultiFileUpload"
               @dragenter.prevent
               @dragover.prevent
@@ -738,10 +511,10 @@
               @drop.prevent="onMultiDrop"
             >
               <i
-                class="iconify w-8 h-8 text-gray-500 mx-auto mb-2"
+                class="iconify w-12 h-12 text-primary-400 dark:text-primary-500 mb-4"
                 data-icon="carbon:document-multiple-01"
               ></i>
-              <p class="text-gray-600">
+              <p class="text-gray-600 dark:text-gray-300">
                 Click to select multiple images or drag and drop files here
               </p>
               <input
@@ -761,55 +534,59 @@
               Files to translate ({{multiFiles.length}})
             </h3>
 
-            <div class="multi-file-list">
+            <div class="max-h-96 overflow-y-auto mb-4 pr-2">
               <div
                 v-for="(file, index) in multiFiles"
                 :key="index"
-                class="multi-file-item"
+                class="file-item"
               >
                 <img :src="getFilePreviewUrl(file)" alt="Preview" />
                 <div class="file-info">
                   <div class="font-medium">{{file.name}}</div>
-                  <div class="text-sm text-gray-500">
-                    {{formatFileSize(file.size)}}
+                  <div class="text-sm text-gray-500 dark:text-gray-400">
+                    {{formatSize(file.size)}}
                   </div>
                 </div>
                 <div class="file-actions">
                   <button
                     type="button"
-                    class="text-red-600 hover:text-red-800"
+                    class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
                     @click="removeFile(index)"
                     title="Remove file"
                   >
-                    <i class="iconify" data-icon="carbon:trash-can"></i>
+                    <i class="iconify text-xl" data-icon="carbon:trash-can"></i>
                   </button>
                 </div>
               </div>
             </div>
 
-            <div class="mt-4 flex justify-between items-center">
+            <div class="flex justify-between items-center">
               <button
                 type="button"
-                class="px-3 py-2 text-red-800 bg-red-100 hover:bg-red-200 rounded-md"
+                class="btn btn-secondary"
                 @click="clearMultiFiles"
               >
+                <i class="iconify mr-1" data-icon="carbon:close"></i>
                 Clear All
               </button>
 
               <button
                 type="button"
-                class="px-3 py-2 text-green-800 bg-green-100 hover:bg-green-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                class="btn btn-primary"
                 @click="processMultiFiles"
                 :disabled="processingBatch || multiFiles.length === 0"
               >
                 <span v-if="processingBatch">
                   <i
-                    class="iconify animate-spin inline-block mr-1"
+                    class="iconify spinner inline-block mr-2"
                     data-icon="carbon:progress-bar-round"
                   ></i>
                   Processing...
                 </span>
-                <span v-else>Start Batch Processing</span>
+                <span v-else>
+                  <i class="iconify mr-2" data-icon="carbon:play"></i>
+                  Start Batch Processing
+                </span>
               </button>
             </div>
           </div>
@@ -817,9 +594,10 @@
           <!-- Batch processing result -->
           <div
             v-if="batchResult"
-            class="mt-4 p-4 bg-green-50 border border-green-200 rounded-md"
+            class="mt-6 p-4 bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md text-green-800 dark:text-green-200"
           >
-            <h3 class="font-bold text-green-700 mb-2">
+            <h3 class="font-bold mb-2">
+              <i class="iconify mr-2" data-icon="carbon:checkmark"></i>
               Batch Processing Started
             </h3>
             <p>
@@ -834,61 +612,71 @@
             <p class="mt-2">
               You can track progress in the Queue Status tab or History tab.
             </p>
+            
+            <div class="mt-4 flex gap-2">
+              <button class="btn btn-sm btn-secondary" @click="switchTab('queue')">
+                <i class="iconify mr-1" data-icon="carbon:data-vis-1"></i>
+                View Queue
+              </button>
+              <button class="btn btn-sm btn-secondary" @click="switchTab('history')">
+                <i class="iconify mr-1" data-icon="carbon:document"></i>
+                View History
+              </button>
+            </div>
           </div>
         </div>
-
-        <!-- Queue Status Tab Content -->
-        <div v-if="activeTab === 'queue'" class="tab-content">
-          <div class="flex justify-between items-center mb-4">
+      </div>
+      
+      <!-- Queue Status Tab Content -->
+      <div v-if="activeTab === 'queue'" class="fade-in">
+        <div class="card">
+          <div class="flex justify-between items-center mb-6">
             <h2 class="text-xl font-bold">Queue Status</h2>
             <button
               type="button"
-              class="px-2 py-1 text-blue-800 bg-blue-100 hover:bg-blue-200 rounded-md text-sm"
+              class="btn btn-sm btn-secondary"
               @click="refreshQueueStatus"
             >
               <i
-                class="iconify inline-block mr-1"
+                class="iconify mr-1"
                 data-icon="carbon:refresh"
               ></i>
               Refresh
             </button>
           </div>
 
-          <div
-            v-if="queueStatus"
-            class="mb-4 grid grid-cols-2 md:grid-cols-4 gap-4"
-          >
-            <div class="bg-blue-50 p-3 rounded-md border border-blue-200">
-              <div class="text-sm text-blue-700">Queue Size</div>
-              <div class="text-2xl font-bold">{{queueStatus.queue_size}}</div>
+          <div v-if="queueStatus" class="mb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="p-4 rounded-md bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+              <div class="text-sm text-blue-700 dark:text-blue-300">Queue Size</div>
+              <div class="text-2xl font-bold text-blue-800 dark:text-blue-200">{{queueStatus.queue_size}}</div>
             </div>
-            <div class="bg-green-50 p-3 rounded-md border border-green-200">
-              <div class="text-sm text-green-700">Free Executors</div>
-              <div class="text-2xl font-bold">
+            <div class="p-4 rounded-md bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+              <div class="text-sm text-green-700 dark:text-green-300">Free Executors</div>
+              <div class="text-2xl font-bold text-green-800 dark:text-green-200">
                 {{queueStatus.free_executors}}
               </div>
             </div>
-            <div class="bg-purple-50 p-3 rounded-md border border-purple-200">
-              <div class="text-sm text-purple-700">Total Executors</div>
-              <div class="text-2xl font-bold">
+            <div class="p-4 rounded-md bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800">
+              <div class="text-sm text-purple-700 dark:text-purple-300">Total Executors</div>
+              <div class="text-2xl font-bold text-purple-800 dark:text-purple-200">
                 {{queueStatus.total_executors}}
               </div>
             </div>
-            <div class="bg-teal-50 p-3 rounded-md border border-teal-200">
-              <div class="text-sm text-teal-700">Connected Executors</div>
-              <div class="text-2xl font-bold">
+            <div class="p-4 rounded-md bg-teal-50 dark:bg-teal-900/30 border border-teal-200 dark:border-teal-800">
+              <div class="text-sm text-teal-700 dark:text-teal-300">Connected Executors</div>
+              <div class="text-2xl font-bold text-teal-800 dark:text-teal-200">
                 {{queueStatus.connected_executors}}
               </div>
             </div>
           </div>
 
           <div v-if="activeBatches && activeBatches.length > 0">
-            <h3 class="font-bold mb-2">Active Batches</h3>
+            <h3 class="font-semibold text-lg mb-4">Active Batches</h3>
 
             <div
               v-for="batch in activeBatches"
               :key="batch.batch_id"
-              class="mb-3 p-3 bg-white border border-gray-200 rounded-md"
+              class="mb-4 p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm"
             >
               <div class="flex justify-between items-center mb-2">
                 <div class="font-medium">{{batch.name}}</div>
@@ -897,7 +685,7 @@
                 </div>
               </div>
 
-              <div class="text-sm text-gray-600 mb-2">
+              <div class="text-sm text-gray-600 dark:text-gray-400 mb-3">
                 <span class="inline-block mr-3"
                   >ID: {{batch.batch_id.substring(0, 8)}}...</span
                 >
@@ -907,51 +695,123 @@
                 <span class="inline-block">Failed: {{batch.failed_tasks}}</span>
               </div>
 
-              <div class="w-full bg-gray-200 rounded-full h-2">
+              <div class="progress-bar mb-3">
                 <div
-                  class="bg-blue-600 h-2 rounded-full"
+                  class="progress-bar-fill"
                   :style="`width: ${batch.progress}%`"
                 ></div>
               </div>
 
-              <div class="mt-2 text-right">
+              <div class="flex justify-end">
                 <button
                   type="button"
-                  class="text-sm text-blue-600 hover:text-blue-800"
+                  class="btn btn-sm btn-secondary"
                   @click="viewBatchDetails(batch.batch_id)"
                 >
+                  <i class="iconify mr-1" data-icon="carbon:view"></i>
                   View Details
                 </button>
               </div>
             </div>
           </div>
 
-          <div v-else-if="queueStatus" class="text-center py-8 text-gray-500">
-            No active batches in the queue
+          <div v-else-if="queueStatus" class="text-center py-8 text-gray-500 dark:text-gray-400">
+            <i
+              class="iconify w-12 h-12 text-gray-400 dark:text-gray-600 mx-auto mb-3"
+              data-icon="carbon:checkmark-outline"
+            ></i>
+            <p class="text-lg">No active batches in the queue</p>
           </div>
 
-          <div v-if="!queueStatus" class="text-center py-8 text-gray-500">
+          <div v-if="!queueStatus" class="text-center py-8 text-gray-500 dark:text-gray-400">
             <i
-              class="iconify w-8 h-8 text-gray-400 mx-auto mb-2"
+              class="iconify w-12 h-12 text-gray-400 dark:text-gray-600 mx-auto mb-3"
               data-icon="carbon:data-unknown"
             ></i>
             <p>No queue data available. Click refresh to check queue status.</p>
           </div>
         </div>
+      </div>
+      
+      <!-- MangaDex Tab Content -->
+      <div v-if="activeTab === 'mangadex'" class="fade-in">
+        <div class="card">
+          <h2 class="text-xl font-bold mb-4">MangaDex Translator</h2>
 
-        <!-- History Tab Content -->
-        <div v-if="activeTab === 'history'" class="tab-content">
+          <div class="mb-6 p-4 rounded-md bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+            <h3 class="font-bold mb-2 text-blue-800 dark:text-blue-200">About MangaDex Translation</h3>
+            <p class="text-blue-700 dark:text-blue-300 mb-2">
+              Enter a MangaDex chapter ID to automatically download and translate the entire chapter.
+              The system will create a batch with the manga title and chapter number.
+            </p>
+            <p class="text-blue-700 dark:text-blue-300 text-sm">
+              <strong>How to get a chapter ID:</strong> Visit a manga chapter on MangaDex website and copy the ID from the URL 
+              (e.g., https://mangadex.org/chapter/<strong>b94d855e-632b-49c1-a776-0b31cc944dbb</strong>)
+            </p>
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium mb-2">Chapter ID</label>
+            <div class="flex">
+              <input 
+                type="text" 
+                v-model="mangadexChapterId" 
+                placeholder="e.g. b94d855e-632b-49c1-a776-0b31cc944dbb" 
+                class="flex-grow rounded-l-md"
+              />
+              <button 
+                @click="processMangadexChapterAuto" 
+                class="btn btn-primary rounded-l-none disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="mangadexProcessing || !mangadexChapterId"
+              >
+                <span v-if="mangadexProcessing">
+                  <i class="iconify spinner inline-block mr-1" data-icon="carbon:progress-bar-round"></i>
+                  Processing...
+                </span>
+                <span v-else>
+                  <i class="iconify inline-block mr-1" data-icon="carbon:rocket"></i>
+                  Translate Chapter
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="mangadexStatus" class="my-4 p-4 rounded-md" :class="mangadexError ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'">
+            {{ mangadexStatus }}
+          </div>
+
+          <div v-if="batchResult && mangadexStatus && !mangadexError" class="mt-6 p-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-md text-green-800 dark:text-green-200">
+            <h3 class="font-bold mb-2">Chapter Processing Started</h3>
+            <p>
+              <span class="font-medium">Batch Name:</span> {{batchResult.name}}
+            </p>
+            <p>
+              <span class="font-medium">Images:</span> {{batchResult.total_tasks}}
+            </p>
+            <div class="mt-4 flex gap-3">
+              <button 
+                @click="switchTab('queue')" 
+                class="btn btn-secondary"
+              >
+                <i class="iconify mr-1" data-icon="carbon:data-vis-1"></i>
+                View in Queue
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- History Tab Content -->
+      <div v-if="activeTab === 'history'" class="fade-in">
+        <div class="card">
           <div class="flex justify-between items-center mb-4">
             <h2 class="text-xl font-bold">Translation History</h2>
             <button
               type="button"
-              class="px-3 py-2 text-blue-800 bg-blue-100 hover:bg-blue-200 rounded-lg shadow-md text-sm transition-all duration-200 ease-in-out"
+              class="btn btn-sm btn-secondary"
               @click="refreshHistory"
             >
-              <i
-                class="iconify inline-block mr-2 text-base"
-                data-icon="carbon:refresh"
-              ></i>
+              <i class="iconify mr-1" data-icon="carbon:refresh"></i>
               Refresh History
             </button>
           </div>
@@ -959,7 +819,7 @@
           <div class="mb-4 flex flex-wrap gap-2">
             <select
               v-model="historyBatchFilter"
-              class="p-2 border border-gray-300 rounded-md"
+              class="p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"
             >
               <option value="">All Batches</option>
               <option
@@ -973,7 +833,7 @@
 
             <select
               v-model="historyStatusFilter"
-              class="p-2 border border-gray-300 rounded-md"
+              class="p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"
             >
               <option value="">All Statuses</option>
               <option value="completed">Completed</option>
@@ -994,45 +854,52 @@
                 v-if="item.result_path"
                 :src="getResultImageUrl(item)"
                 alt="Result"
-                class="rounded-md border border-gray-300"
+                class="history-item-image"
+                @click="viewHistoryResult(item)"
               />
               <div
                 v-else
-                class="w-20 h-20 bg-gray-200 rounded-md flex items-center justify-center"
+                class="w-24 h-24 md:w-30 md:h-30 bg-gray-200 dark:bg-gray-700 rounded-md flex items-center justify-center"
               >
-                <i class="iconify text-gray-400" data-icon="carbon:image"></i>
+                <i class="iconify text-3xl text-gray-400 dark:text-gray-500" data-icon="carbon:image"></i>
               </div>
 
-              <div class="history-info">
-                <div class="flex justify-between items-center mb-1">
-                  <div class="font-medium">
-                    Task: {{item.task_id.substring(0, 8)}}...
+              <div class="history-item-info">
+                <div class="history-item-header">
+                  <div class="history-item-id">
+                    Task ID: {{item.task_id.substring(0, 8)}}...
                   </div>
                   <div class="status-pill" :class="`status-${item.status}`">
                     {{item.status}}
                   </div>
                 </div>
 
-                <div class="text-sm text-gray-600">
-                  <p>Created: {{formatDate(item.created_at)}}</p>
-                  <p v-if="item.batch_id">
+                <div class="history-item-meta">
+                  <div>
+                    <i class="iconify mr-1" data-icon="carbon:time"></i>
+                    {{formatDate(item.created_at)}}
+                  </div>
+                  <div v-if="item.batch_id">
+                    <i class="iconify mr-1" data-icon="carbon:package"></i>
                     Batch: {{item.batch_id.substring(0, 8)}}...
-                  </p>
+                  </div>
                 </div>
 
                 <div
                   v-if="item.error_message"
-                  class="mt-1 text-sm text-red-600"
+                  class="history-item-error"
                 >
+                  <i class="iconify mr-1" data-icon="carbon:warning"></i>
                   {{item.error_message}}
                 </div>
 
-                <div v-if="item.result_path" class="mt-2">
+                <div class="history-item-actions" v-if="item.result_path">
                   <button
                     type="button"
-                    class="text-sm text-blue-600 hover:text-blue-800 mr-2"
+                    class="view-btn"
                     @click="viewHistoryResult(item)"
                   >
+                    <i class="iconify" data-icon="carbon:view"></i>
                     View Result
                   </button>
                 </div>
@@ -1042,748 +909,89 @@
 
           <div
             v-else-if="historyItems && historyItems.length === 0"
-            class="text-center py-8 text-gray-500"
+            class="text-center py-8 text-gray-500 dark:text-gray-400"
           >
-            No translation history found
+            <i
+              class="iconify w-12 h-12 text-gray-400 dark:text-gray-600 mx-auto mb-3"
+              data-icon="carbon:document-blank"
+            ></i>
+            <p class="text-lg">No translation history found</p>
           </div>
 
-          <div v-else class="text-center py-8 text-gray-500">
+          <div v-else class="text-center py-8 text-gray-500 dark:text-gray-400">
             <i
-              class="iconify w-8 h-8 text-gray-400 mx-auto mb-2"
-              data-icon="carbon:data-unknown"
+              class="iconify w-12 h-12 text-gray-400 dark:text-gray-600 mx-auto mb-3 spinner"
+              data-icon="carbon:progress-bar-round"
             ></i>
             <p>Loading history data...</p>
           </div>
         </div>
+      </div>
+    </main>
 
-        <!-- Connection info -->
-        <div class="connection-info">
-          <p>Having connection issues?</p>
+    <!-- Result modal -->
+    <div
+      v-if="showResultModal"
+      class="modal-backdrop"
+      @click="closeResultModal"
+    >
+      <div
+        class="modal-content max-w-4xl"
+        @click.stop
+      >
+        <div class="modal-header">
+          <h3 class="text-xl font-bold">Translation Result</h3>
+          <button
+            type="button"
+            class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+            @click="closeResultModal"
+          >
+            <i class="iconify w-6 h-6" data-icon="carbon:close"></i>
+          </button>
         </div>
 
-        <!-- Result modal -->
-        <div
-          v-if="showResultModal"
-          class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-          @click="closeResultModal"
-        >
-          <div
-            class="bg-white rounded-lg p-4 max-w-4xl max-h-[90vh] overflow-auto"
-            @click.stop
-          >
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-xl font-bold">Translation Result</h3>
-              <button
-                type="button"
-                class="text-gray-500"
-                @click="closeResultModal"
-              >
-                <i class="iconify w-6 h-6" data-icon="carbon:close"></i>
-              </button>
-            </div>
-
-            <div class="text-center">
-              <img :src="modalImageUrl" class="max-w-full max-h-[70vh]" />
-
-              <div class="mt-4 flex justify-center gap-4">
-                <button
-                  type="button"
-                  class="px-3 py-2 text-green-800 bg-green-100 hover:bg-green-200 rounded-md"
-                  @click="downloadModalImage"
-                >
-                  Download Image
-                </button>
-              </div>
-            </div>
-          </div>
+        <div class="modal-body text-center">
+          <img :src="modalImageUrl" class="max-w-full max-h-[70vh]" alt="Translation Result" />
         </div>
 
-        <!-- フッターリンク -->
-        <div
-          class="flex flex-col sm:flex-row items-center justify-center gap-4 text-sm text-gray-600 mt-4"
-        >
-          <div>
-            Please consider supporting us by
-            <a
-              class="underline text-blue-600 hover:text-blue-800"
-              href="https://ko-fi.com/voilelabs"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Ko-fi
-            </a>
-            or
-            <a
-              class="underline text-blue-600 hover:text-blue-800"
-              href="https://www.patreon.com/voilelabs"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Patreon
-            </a>
-            !
-          </div>
-          <a
-            class="underline text-blue-600 hover:text-blue-800"
-            href="https://github.com/zyddnys/manga-image-translator"
-            target="_blank"
-            rel="noopener noreferrer"
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-success"
+            @click="downloadModalImage"
           >
-            Source Code
-          </a>
+            <i class="iconify mr-1" data-icon="carbon:download"></i>
+            Download Image
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            @click="closeResultModal"
+          >
+            Close
+          </button>
         </div>
       </div>
-    </form>
-
+    </div>
+    
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-gray-800 shadow-md py-4 mt-6 transition-colors">
+        <div class="container mx-auto px-4 text-center text-gray-600 dark:text-gray-400 text-sm">
+            <p>Manga Image Translator - Reader Interface</p>
+            <p class="mt-1">
+                <a href="https://github.com/shiestapoi/manga-image-translator" class="text-blue-600 dark:text-blue-400 hover:underline" target="_blank">
+                    GitHub Repository
+                </a>
+            </p>
+        </div>
+    </footer>
+    
+    <!-- Custom JavaScript -->
+    <script src="/static/js/app.js"></script>
     <script>
-      const BASE_URI = "/";
-      const acceptTypes = [
-        "image/png",
-        "image/jpeg",
-        "image/bmp",
-        "image/webp",
-      ];
-
-      function formatSize(bytes) {
-        const k = 1024;
-        const sizes = ["B", "KB", "MB", "GB", "TB"];
-        if (bytes === 0) return "0B";
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return `${(bytes / k ** i).toFixed(2)}${sizes[i]}`;
-      }
-
-      function formatProgress(loaded, total) {
-        return `${formatSize(loaded)}/${formatSize(total)}`;
-      }
-
-      PetiteVue.createApp({
-        onmounted() {
-          window.addEventListener("paste", this.onpaste);
-          // Load queue status on mount
-          this.refreshQueueStatus();
-          // Load history data if on history tab
-          if (this.activeTab === "history") {
-            this.refreshHistory();
-          }
-        },
-
-        // Tab management
-        activeTab: "single",
-        switchTab(tab) {
-          this.activeTab = tab;
-
-          // Load data based on active tab
-          if (tab === "queue") {
-            this.refreshQueueStatus();
-          } else if (tab === "history") {
-            this.refreshHistory();
-          }
-        },
-
-        // Single image upload
-        file: null,
-        get fileUri() {
-          return this.file ? URL.createObjectURL(this.file) : null;
-        },
-
-        // Configuration options
-        detectionResolution: "1536",
-        textDetector: "default",
-        renderTextDirection: "auto",
-        translator: "deepl",
-        validTranslators: [
-          "youdao",
-          "baidu",
-          "deepl",
-          "papago",
-          "caiyun",
-          "sakura",
-          "offline",
-          "openai",
-          "deepseek",
-          "groq",
-          "gemini",
-          "custom_openai",
-          "nllb",
-          "nllb_big",
-          "sugoi",
-          "jparacrawl",
-          "jparacrawl_big",
-          "m2m100",
-          "m2m100_big",
-          "mbart50",
-          "qwen2",
-          "qwen2_big",
-          "none",
-          "original",
-        ],
-        getTranslatorName(key) {
-          if (key === "none") return "No Text";
-          return key ? key[0].toUpperCase() + key.slice(1) : "";
-        },
-        targetLanguage: "IND",
-
-        inpaintingSize: "2048",
-        customUnclipRatio: 2.3,
-        customBoxThreshold: 0.7,
-        maskDilationOffset: 30,
-        inpainter: "default",
-
-        // Multiple image upload
-        multiFiles: [],
-        batchName: "",
-        processingBatch: false,
-        batchResult: null,
-
-        // Queue status
-        queueStatus: null,
-        activeBatches: null,
-
-        // History
-        historyItems: null,
-        historyBatches: [],
-        historyBatchFilter: "",
-        historyStatusFilter: "",
-
-        // Modal
-        showResultModal: false,
-        modalImageUrl: "",
-        currentModalItem: null,
-
-        // Get filtered history items
-        get filteredHistoryItems() {
-          if (!this.historyItems) return [];
-
-          return this.historyItems.filter((item) => {
-            // Filter by batch if specified
-            if (
-              this.historyBatchFilter &&
-              item.batch_id !== this.historyBatchFilter
-            ) {
-              return false;
-            }
-
-            // Filter by status if specified
-            if (
-              this.historyStatusFilter &&
-              item.status !== this.historyStatusFilter
-            ) {
-              return false;
-            }
-
-            return true;
-          });
-        },
-
-        // Single image upload handlers
-        ondrop(e) {
-          const file = e.dataTransfer?.files?.[0];
-          if (file && acceptTypes.includes(file.type)) {
-            this.file = file;
-          }
-        },
-        onfilechange(e) {
-          const file = e.target.files?.[0];
-          if (file && acceptTypes.includes(file.type)) {
-            this.file = file;
-          }
-        },
-        onpaste(e) {
-          const items = (e.clipboardData || e.originalEvent.clipboardData)
-            .items;
-          for (const item of items) {
-            if (item.kind === "file") {
-              const file = item.getAsFile();
-              if (!file || !acceptTypes.includes(file.type)) continue;
-              this.file = file;
-            }
-          }
-        },
-
-        // Multiple image upload handlers
-        triggerMultiFileUpload() {
-          document.getElementById("multi-file-input").click();
-        },
-
-        onMultiDrop(e) {
-          const files = e.dataTransfer?.files;
-          if (files && files.length > 0) {
-            this.addMultiFiles(files);
-          }
-        },
-
-        onMultiFileChange(e) {
-          const files = e.target.files;
-          if (files && files.length > 0) {
-            this.addMultiFiles(files);
-          }
-        },
-
-        addMultiFiles(files) {
-          for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (acceptTypes.includes(file.type)) {
-              // Check if file already exists in the list
-              const exists = this.multiFiles.some(
-                (f) => f.name === file.name && f.size === file.size
-              );
-
-              if (!exists) {
-                this.multiFiles.push(file);
-              }
-            }
-          }
-        },
-
-        getFilePreviewUrl(file) {
-          return URL.createObjectURL(file);
-        },
-
-        removeFile(index) {
-          this.multiFiles.splice(index, 1);
-        },
-
-        clearMultiFiles() {
-          this.multiFiles = [];
-          this.batchResult = null;
-        },
-
-        formatFileSize(bytes) {
-          return formatSize(bytes);
-        },
-
-        async processMultiFiles() {
-          if (this.processingBatch || this.multiFiles.length === 0) return;
-
-          this.processingBatch = true;
-
-          try {
-            // Step 1: Create batch
-            const batchName =
-              this.batchName || `Batch ${new Date().toLocaleString()}`;
-            const batchResponse = await fetch("/batch/create", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                name: batchName,
-                description: `Created on ${new Date().toLocaleString()}`,
-              }),
-            });
-
-            if (!batchResponse.ok) {
-              throw new Error("Failed to create batch");
-            }
-
-            const batchData = await batchResponse.json();
-            const batchId = batchData.batch_id;
-
-            // Step 2: Add files to batch
-            const formData = new FormData();
-            for (let i = 0; i < this.multiFiles.length; i++) {
-              formData.append("images", this.multiFiles[i]);
-            }
-
-            // Add translation config
-            const config = {
-              detector: {
-                detector: this.textDetector,
-                detection_size: parseInt(this.detectionResolution),
-                box_threshold: parseFloat(this.customBoxThreshold),
-                unclip_ratio: parseFloat(this.customUnclipRatio),
-              },
-              render: {
-                direction: this.renderTextDirection,
-              },
-              translator: {
-                translator: this.translator,
-                target_lang: this.targetLanguage,
-              },
-              inpainter: {
-                inpainter: this.inpainter,
-                inpainting_size: parseInt(this.inpaintingSize),
-              },
-              mask_dilation_offset: parseInt(this.maskDilationOffset),
-            };
-
-            formData.append("config", JSON.stringify(config));
-
-            const uploadResponse = await fetch(
-              `/batch/${batchId}/add-multiple`,
-              {
-                method: "POST",
-                body: formData,
-              }
-            );
-
-            if (!uploadResponse.ok) {
-              throw new Error("Failed to add images to batch");
-            }
-
-            const tasksData = await uploadResponse.json();
-
-            // Step 3: Show result
-            this.batchResult = {
-              ...batchData,
-              total_tasks: tasksData.length,
-            };
-
-            // Refresh queue status
-            this.refreshQueueStatus();
-          } catch (error) {
-            console.error("Error processing files:", error);
-            alert("Error: " + error.message);
-          } finally {
-            this.processingBatch = false;
-          }
-        },
-
-        // Queue status handlers
-        async refreshQueueStatus() {
-          try {
-            // Get queue status
-            const statusResponse = await fetch("/queue/status");
-            if (statusResponse.ok) {
-              this.queueStatus = await statusResponse.json();
-            }
-
-            // Get active batches
-            const batchesResponse = await fetch("/batch");
-            if (batchesResponse.ok) {
-              const batches = await batchesResponse.json();
-              // Filter only active batches (not completed)
-              this.activeBatches = batches.filter(
-                (b) =>
-                  b.status === "queued" ||
-                  b.status === "created" ||
-                  b.status === "in_progress"
-              );
-            }
-          } catch (error) {
-            console.error("Error refreshing queue status:", error);
-          }
-        },
-
-        viewBatchDetails(batchId) {
-          this.historyBatchFilter = batchId;
-          this.switchTab("history");
-        },
-
-        // History handlers
-        async refreshHistory() {
-          try {
-            // Get history items
-            const historyResponse = await fetch("/history");
-            if (historyResponse.ok) {
-              this.historyItems = await historyResponse.json();
-            }
-
-            // Get batches for filter
-            const batchesResponse = await fetch("/batch");
-            if (batchesResponse.ok) {
-              this.historyBatches = await batchesResponse.json();
-            }
-          } catch (error) {
-            console.error("Error refreshing history:", error);
-          }
-        },
-
-        formatDate(dateString) {
-          const date = new Date(dateString);
-          return date.toLocaleString();
-        },
-
-        getFilenameFromPath(path) {
-          if (!path) return "";
-          return path.split("/").pop();
-        },
-
-        getResultImageUrl(item) {
-          // If result_path is a full URL (R2), use as is
-          if (item.result_path && item.result_path.startsWith("http")) {
-            return item.result_path;
-          }
-          const path = "/static/results/";
-          return item.result_path ? `${path}${item.result_path}` : "";
-        },
-
-        viewHistoryResult(item) {
-          if (item.result_path) {
-            if (item.result_path && item.result_path.startsWith("http")) {
-              this.modalImageUrl = item.result_path;
-            } else {
-              const date = new Date(item.created_at);
-              const formattedDate = `${date.getFullYear()}${(date.getMonth() + 1)
-                .toString()
-                .padStart(2, "0")}${date.getDate().toString().padStart(2, "0")}`;
-              this.modalImageUrl = `/static/results/${formattedDate}/${this.getFilenameFromPath(
-                item.result_path
-              )}`;
-            }
-            this.currentModalItem = item;
-            this.showResultModal = true;
-          }
-        },
-
-        closeResultModal() {
-          this.showResultModal = false;
-          this.modalImageUrl = "";
-          this.currentModalItem = null;
-        },
-
-        downloadModalImage() {
-          if (!this.modalImageUrl) return;
-
-          const link = document.createElement("a");
-          link.href = this.modalImageUrl;
-          link.download = `translated-${this.getFilenameFromPath(
-            this.currentModalItem?.result_path || "image.png"
-          )}`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        },
-
-        // Single image translation status
-        progress: null,
-        progressPercent: null,
-        status: null,
-        queuePos: null,
-        errorDetails: null,
-        cachedStatusText: "",
-        get statusText() {
-          var newStatusText = this._statusText;
-          if (newStatusText != null && newStatusText != this.cachedStatusText) {
-            this.cachedStatusText = newStatusText;
-          }
-          return this.cachedStatusText;
-        },
-        get _statusText() {
-          switch (this.status) {
-            case "upload":
-              return this.progress
-                ? `Uploading (${this.progress})`
-                : "Uploading";
-            case "pending":
-              return this.queuePos
-                ? `Queuing, your position is ${this.queuePos}`
-                : "Processing";
-            case "detection":
-              return "Detecting texts";
-            case "ocr":
-              return "Running OCR";
-            case "mask-generation":
-              return "Generating text mask";
-            case "inpainting":
-              return "Running inpainting";
-            case "upscaling":
-              return "Running upscaling";
-            case "translating":
-              return "Translating";
-            case "rendering":
-              return "Rendering translated texts";
-            case "finished":
-              return "Downloading image";
-            case "error":
-              return "Something went wrong, please try again";
-            case "error-upload":
-              return "Upload failed, please try again";
-            case "error-lang":
-              return "Your target language is not supported by the chosen translator";
-            case "error-translating":
-              return "Did not get any text back from the text translation service";
-            case "error-too-large":
-              return "Image size too large (greater than 8000x8000 px)";
-            case "error-disconnect":
-              return "Lost connection to server.";
-            default:
-              return this.status;
-          }
-        },
-        get error() {
-          return /^error/.test(this.status);
-        },
-        result: null,
-        get resultUri() {
-          return this.result ? URL.createObjectURL(this.result) : null;
-        },
-
-        downloadImage() {
-          if (!this.result) return;
-
-          const link = document.createElement("a");
-          link.href = this.resultUri;
-          const originalFilename = this.file?.name || "image";
-          const filenameWithoutExt =
-            originalFilename.substring(0, originalFilename.lastIndexOf(".")) ||
-            originalFilename;
-          link.download = `translated-${filenameWithoutExt}.png`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        },
-
-        async onsubmit(e) {
-          if (!this.file) return;
-
-          this.progress = null;
-          this.progressPercent = null;
-          this.queuePos = null;
-          this.status = "upload";
-          this.errorDetails = null;
-          let buffer = new Uint8Array();
-
-          const formData = new FormData();
-          formData.append("image", this.file);
-
-          const config = `{
-          "detector": {
-            "detector": "${this.textDetector}",
-            "detection_size": ${this.detectionResolution},
-            "box_threshold": ${this.customBoxThreshold},
-            "unclip_ratio": ${this.customUnclipRatio}
-          },
-          "render": {
-            "direction": "${this.renderTextDirection}"
-          },
-          "translator": {
-            "translator": "${this.translator}",
-            "target_lang": "${this.targetLanguage}"
-          },
-          "inpainter": {
-            "inpainter": "${this.inpainter}",
-            "inpainting_size": ${this.inpaintingSize}
-          },
-          "mask_dilation_offset": ${this.maskDilationOffset}
-        }`;
-
-          formData.append("config", config);
-
-          const processChunk = (value) => {
-            if (this.error) return;
-
-            const newBuffer = new Uint8Array(buffer.length + value.length);
-            newBuffer.set(buffer);
-            newBuffer.set(value, buffer.length);
-            buffer = newBuffer;
-
-            while (buffer.length >= 5) {
-              const dataSize = new DataView(buffer.buffer).getUint32(1, false);
-              const totalSize = 5 + dataSize;
-              if (buffer.length < totalSize) {
-                break;
-              }
-
-              const statusCode = buffer[0];
-              const decoder = new TextDecoder("utf-8");
-              const data = buffer.slice(5, totalSize);
-              switch (statusCode) {
-                case 0:
-                  this.result = new Blob([data], { type: "image/png" });
-                  this.status = null;
-                  // Refresh history after successful translation
-                  setTimeout(() => this.refreshHistory(), 1000);
-                  break;
-                case 1:
-                  const statusMsg = decoder.decode(data);
-                  this.status = statusMsg;
-
-                  // Set progress percentage for specific steps
-                  if (statusMsg === "detection") {
-                    this.progressPercent = 20;
-                  } else if (statusMsg === "ocr") {
-                    this.progressPercent = 30;
-                  } else if (statusMsg === "mask-generation") {
-                    this.progressPercent = 40;
-                  } else if (statusMsg === "inpainting") {
-                    this.progressPercent = 60;
-                  } else if (statusMsg === "translating") {
-                    this.progressPercent = 75;
-                  } else if (statusMsg === "rendering") {
-                    this.progressPercent = 90;
-                  } else if (statusMsg === "finished") {
-                    this.progressPercent = 100;
-                  }
-                  break;
-                case 2:
-                  this.status = "error";
-                  this.errorDetails = decoder.decode(data);
-                  console.error(this.errorDetails);
-                  break;
-                case 3:
-                  this.status = "pending";
-                  this.queuePos = decoder.decode(data);
-                  break;
-                case 4:
-                  this.status = "pending";
-                  this.queuePos = null;
-                  this.progressPercent = 10;
-                  break;
-              }
-              buffer = buffer.slice(totalSize);
-            }
-          };
-
-          const uploadWithProgress = async (formData) => {
-            try {
-              const response = await fetch(
-                `${BASE_URI}translate/with-form/image/stream`,
-                {
-                  method: "POST",
-                  body: formData,
-                }
-              );
-
-              if (response.status !== 200) {
-                this.status = "error-upload";
-                return;
-              }
-
-              const reader = response.body.getReader();
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                processChunk(value);
-              }
-            } catch (error) {
-              console.error(error);
-              this.status = "error-disconnect";
-              this.errorDetails = "Check your network connection.";
-            }
-          };
-
-          uploadWithProgress(formData);
-        },
-        clear() {
-          this.file = null;
-          this.result = null;
-          this.status = null;
-          this.errorDetails = null;
-          this.progressPercent = null;
-        },
-
-        async startTranslator() {
-          try {
-            const response = await fetch("/start-translator", {
-              method: "POST",
-            });
-            if (response.ok) {
-              const data = await response.json();
-              alert(data.message);
-            } else {
-              alert(
-                "Failed to start translator client process. Check logs for details."
-              );
-            }
-          } catch (error) {
-            console.error("Error starting translator client process:", error);
-            alert(
-              "An error occurred while trying to start the translator client process."
-            );
-          }
-        },
-      }).mount();
+      document.addEventListener('DOMContentLoaded', function() {
+        PetiteVue.createApp().mount();
+      });
     </script>
   </body>
 </html>
