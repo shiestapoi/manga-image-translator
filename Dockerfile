@@ -10,7 +10,7 @@ COPY requirements.txt /app/requirements.txt
 
 RUN export TZ=Etc/UTC \
         && apt update --yes \
-        && apt install g++ wget ffmpeg libsm6 libxext6 gimp libvulkan1 --yes \
+        && apt install g++ wget ffmpeg libsm6 libxext6 gimp libvulkan1 pkg-config default-libmysqlclient-dev --yes \
         && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
         && dpkg -i cuda-keyring_1.1-1_all.deb \
         && rm -f cuda-keyring_1.1-1_all.deb \

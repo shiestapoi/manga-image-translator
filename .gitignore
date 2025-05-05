@@ -6,6 +6,7 @@ result
 __pycache__
 .venv/
 upload-cache/
+output.log
 ocrs
 Manga
 Manga-translated
